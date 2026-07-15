@@ -24,6 +24,8 @@ bmk "About"
 bmk "DATA"
 
 PLAYER_SPRITESHEET: emb file "assets/astronaut.png" # To be implemented
+def PLAYER_SPRITE_WIDTH 8
+def PLAYER_SPRITE_WIDTH_F 8.0
 
 #-------------------------------------------------------------------------------
 bmk "CONSTANTS"
@@ -34,28 +36,33 @@ def G 1.0 # This makes gravity a lot stronger but more fun :)
 def MAX_BODIES 20
 def BODY_ELASTICITY 0.8
 
-# Visuals
-def TIME_SCALE 1.0
-def BODY_LUMA 200
-
-def ZOOM_STEP 2.0
-
-def PLAYER_SPRITE_WIDTH 8
-def PLAYER_SPRITE_WIDTH_F 8.0
-
-def CENTER_CAMERA true # Whether the camera follows the player or not
-def CAMERA_SPEED 0.5
-def CAMERA_OFFSET 50.0
-def DRAW_VELOCITIES true # Whether to draw velocity vectors
-def VELOCITY_VISUAL_SCALE 1.0 # How much velocity vectors should be scaled
-
-def ZOOM_OUT_VAL 4.0
-def ZOOM_IN_VAL 1.0
-
 def SCREEN_WIDTH_F 320.0
 def SCREEN_HEIGHT_F 240.0
 def CENTER_X_F SCREEN_WIDTH_F/2.0
 def CENTER_Y_F SCREEN_HEIGHT_F/2.0
+
+#-------------------------------------------------------------------------------
+sbmk "Simulation Settings"
+
+def TIME_SCALE 1.0 # How fast the simulation runs
+
+#-------------------------------------------------------------------------------
+sbmk "Visualization Settings"
+
+def CENTER_CAMERA true # Whether the camera follows the player or not
+def ZOOM_STEP 2.0
+def CAMERA_SPEED 0.5
+def CAMERA_OFFSET 50.0
+def ZOOM_OUT_VAL 4.0
+def ZOOM_IN_VAL 1.0
+def BODY_LUMA 200 # How bright the objects are
+
+def DRAW_VELOCITIES false # Whether to draw velocity vectors
+def VELOCITY_VISUAL_SCALE 1.0 # How much velocity vectors should be scaled
+
+
+#-------------------------------------------------------------------------------
+sbmk "Input Bindings"
 
 Input:
     def .JUMP BTN_A
@@ -1048,6 +1055,12 @@ update_smoke:
             fdiv t4, t6
             fadd t0, t2
             fadd t1, t3
+            @if_timescale_lt_0:
+                cmp flt, TIME_SCALE, 0.0
+                jfs @endif2+
+                fmul t0, TIME_SCALE
+                fmul t1, TIME_SCALE
+            @endif2:
             ste f32t, SMOKE.X, t0
             ste f32t, SMOKE.Y, t1
             ste f32t, SMOKE.LIFESPAN, t4
