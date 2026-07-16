@@ -26,6 +26,13 @@ bmk "DATA"
 PLAYER_SPRITESHEET: emb file "assets/astronaut.png" # To be implemented
 def PLAYER_SPRITE_WIDTH 8
 def PLAYER_SPRITE_WIDTH_F 8.0
+BACKGROUND_TEXTURE: emb file "assets/background_simple.png"
+def BG_TEX_WIDTH 320
+def BG_TEX_HEIGHT 240
+def BG_TEX_WIDTH_F 320.0
+def BG_TEX_HEIGHT_F 240.0
+HUD_TEXTURE: emb file "assets/hud_compact.png"
+
 
 #-------------------------------------------------------------------------------
 bmk "CONSTANTS"
@@ -55,10 +62,16 @@ def CAMERA_SPEED 0.5
 def CAMERA_OFFSET 50.0
 def ZOOM_OUT_VAL 4.0
 def ZOOM_IN_VAL 1.0
-def BODY_LUMA 200 # How bright the objects are
+def BODY_LUMA 150 # How bright the objects are
 
-def DRAW_VELOCITIES false # Whether to draw velocity vectors
+def DRAW_VELOCITIES true # Whether to draw velocity vectors
 def VELOCITY_VISUAL_SCALE 1.0 # How much velocity vectors should be scaled
+def VELOCITY_VECTOR_START_LUMA 10
+def VELOCITY_VECTOR_END_LUMA 255
+
+def CHARGE_BAR_LENGTH 8
+
+def BG_SCROLL_SCALE 0.5 # How much the background moves relative to the foreground
 
 
 #-------------------------------------------------------------------------------
@@ -79,25 +92,28 @@ PLAYER:
     # Constants
     def .SPEED 100.0
     def .THRUSTER_STRENGTH 100.0
-    def .MIN_JUMP_CHARGE 100.0
+    def .MIN_JUMP_CHARGE 50.0
     def .MAX_JUMP_CHARGE 200.0
-    def .JUMP_CHARGE_SPEED -(.MAX_JUMP_CHARGE-.MIN_JUMP_CHARGE)/0.8
+    def .JUMP_CHARGE_SPEED (.MAX_JUMP_CHARGE-.MIN_JUMP_CHARGE)/0.8
     # Properties
     ## Physics
     .x: emb f32t 0.0 # X Position
-    .y: emb f32t 0.0 # Y Position
+    .y: emb f32t -30.0 # Y Position
     .velx: emb f32t 0.0 # X Velocity (km/s)
     .vely: emb f32t 0.0 # Y Velocity (km/s)
     .movex: emb f32t 0.0 # X Move Velocity
     .movey: emb f32t 0.0 # Y Move Velocity
-    .rot: emb f32t 0.0 # Rotation (Radians)
+    .rot: emb f32t -PI # Rotation (Radians)
     .mass: emb f32t 7.0 # Mass (kg)
     .collision_radius: emb f32t PLAYER_SPRITE_WIDTH_F/2.0 # Radius of collision circle
 
-    .jump_charge: emb f32t PLAYER.MIN_JUMP_CHARGE
     .grounded: emb u8t false
+    .is_flying: emb u8t false # Player is moving in the air
+    .is_charging: emb u8t false # Player is charging a jump
+    .can_jump: emb u8t true
+    .jump_charge: emb f32t PLAYER.MIN_JUMP_CHARGE
+
     .parent_body_index: emb u8t 0
-    .is_flying: emb u8t false
     .flip_sprite: emb u8t false
 
 #-------------------------------------------------------------------------------
@@ -127,7 +143,7 @@ sbmk "Smoke Particle"
 
 SMOKE:
     # Constants
-    def .MAX_PARTICLE_COUNT 60
+    def .MAX_SMOKE_COUNT 60
     def .MIN_VEL 1.0
     def .MAX_VEL 10.0
     def .MIN_ANGLE_OFFSET -5.0
@@ -164,22 +180,28 @@ Strings:
 #-------------------------------------------------------------------------------
 bmk "VARIABLES"
 
+distance_scale: emb f32t 1.0 # Camera Zoom
+dt: emb f32t 0.0 # DeltaTime
+bg_offset_x: emb f32t 0.0
+bg_offset_y: emb f32t 0.0
+
+control_camera_offset_scalar: emb i8t 0 # -1, 1, or 1, used for controlling the camera with up and down
+
+# Arrays
+
 buffer: res u8t MAX_TERMINAL_INPUT_SIZE
 
 bodies: res u8t BODY.SIZE*MAX_BODIES
 bodies_count: emb u8t 0
 
-smoke: res u8t SMOKE.SIZE*SMOKE.MAX_PARTICLE_COUNT
-smoke_count: emb u8t 0
-smoke_can_spawn: emb u8t false
+smoke: res u8t SMOKE.SIZE*SMOKE.MAX_SMOKE_COUNT
+
+# Flags
 
 has_player_collided: emb u8t false
 skip_player_collision_check: emb u8t false
-
+smoke_can_spawn: emb u8t false
 zoom_toggled: emb u8t true
-distance_scale: emb f32t 1.0 # Camera Zoom
-
-dt: emb f32t 0.0 # DeltaTime
 
 #-------------------------------------------------------------------------------
 bmk "-------------------------"
@@ -193,22 +215,22 @@ _start: # Runs once when the VM starts.
     # Initialize your game state here.
 
     mov a0, 0.0 # X
-    mov a1, 140.0 # Y
+    mov a1, 0.0 # Y
     mov a2, 0.0 # VX
     mov a3, 0.0 # VY
     mov a4, 0.0 # ROTATION
-    mov a5, 70.0 # RADIUS
-    mov a6, 1000000.0 # MASS
+    mov a5, 20.0 # RADIUS
+    mov a6, 10000.0 # MASS
     cal add_body
 
-    mov a0, 640.0 # X
-    mov a1, 140.0 # Y
-    mov a2, 0.0 # VX
-    mov a3, 40.0 # VY
-    mov a4, 0.0 # ROTATION
-    mov a5, 30.0 # RADIUS
-    mov a6, 100000.0 # MASS
-    cal add_body
+    #mov a0, 1000.0 # X
+    #mov a1, 0.0 # Y
+    #mov a2, 0.0 # VX
+    #mov a3, 400.0 # VY
+    #mov a4, 0.0 # ROTATION
+    #mov a5, 30.0 # RADIUS
+    #mov a6, 100000.0 # MASS
+    #cal add_body
 
     #mov a0, 896.0 # X
     #mov a1, 140.0 # Y
@@ -256,7 +278,6 @@ _update: # Runs at 60 Hz.
         cal update_collisions
         cal update_positions
         cal update_smoke
-        yield
         jmp @iterate_update-
     @end:
     .if_center_camera:
@@ -264,6 +285,9 @@ _update: # Runs at 60 Hz.
         jfs @endif+
         cal center_camera
     @endif:
+
+    lod u8t, a0, PLAYER.grounded
+    syscall SYS_PRINT_LINE_INT
     pop s0
     exit
 
@@ -271,9 +295,11 @@ _update: # Runs at 60 Hz.
 sbmk "Draw"
 _draw: # Runs at 60 Hz and updates the front buffer.
     # Draw graphics to the screen here.
+    cal draw_background
     cal draw_bodies
-    cal draw_player
     cal draw_smoke
+    cal draw_player
+    cal draw_hud
     exit
 
 #-------------------------------------------------------------------------------
@@ -391,278 +417,6 @@ spawn_smoke:
     ste f32t, SMOKE.VY, t8
     ste f32t, SMOKE.LIFESPAN, SMOKE.DEFAULT_LIFESPAN
 
-    ret
-
-
-#-------------------------------------------------------------------------------
-bmk "Input"
-
-#-------------------------------------------------------------------------------
-sbmk "Check Input"
-check_input:
-    # Get input states
-    # s0: Left - Right
-    # s1: Up - Down
-    # s2: Jump
-    # s3: Kill Velocity
-
-    vpsh s0..s3
-
-    syscall SYS_GET_INPUT
-    and t0, a0, BTN_LEFT
-    cmp neq, t0, 0
-    fctf t0, cr
-    and t1, a0, BTN_RIGHT
-    cmp neq, t1, 0
-    fctf t1, cr
-    and t2, a0, BTN_UP
-    cmp neq, t2, 0
-    fctf t2, cr
-    and t3, a0, BTN_DOWN
-    cmp neq, t3, 0
-    fctf t3, cr
-    fneg t0
-    fneg t2
-    fadd s0, t0, t1
-    fadd s1, t2, t3
-
-    and t0, a0, Input.JUMP
-    cmp neq, t0, 0
-    mov s2, cr
-
-    and t0, a0, Input.KILL_VELOCITY
-    cmp neq, t0, 0
-    mov s3, cr
-
-    str u8t, PLAYER.is_flying, false
-
-    .is_grounded:
-        lod u8t, cr, PLAYER.grounded
-        jfs @end+
-        str f32t, PLAYER.movex, 0.0 # Reset movement
-        str f32t, PLAYER.movey, 0.0
-        cmp neq, s1, 0
-        jfs @end+
-        mov a0, s1
-        cal charge_jump
-    @end:
-
-    @move:
-        cmp neq, s0, 0
-        mov t0, cr
-        cmp neq, s1, 0
-        orr cr, t0
-        jfs @end+
-        mov a0, s0
-        mov a1, s1
-        cal player_move
-    @end:
-
-    @jump:
-        cmp eq, s2, 1
-        jfs @end+
-        cal player_jump
-    @end:
-
-    @kill_velocity:
-        cmp eq, s3, 1
-        jfs @end+
-        cal player_kill_velocity
-    @end:
-
-
-    vpop s0..s3
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Player Move"
-player_move:
-    # a0: horizontal direction
-    # a1: vertical direction
-
-    .if_grounded:
-        lod u8t, cr, PLAYER.grounded
-        jfs @else+
-        cmp neq, a0, 0.0
-        jfs @endif+
-        lod u8t, t0, PLAYER.parent_body_index
-        cea bodies, t0, BODY.SIZE
-        lod f32t, t0, PLAYER.x
-        lod f32t, t1, PLAYER.y
-        lod f32t, t2, PLAYER.velx
-        lod f32t, t3, PLAYER.vely
-        lde f32t, t4, BODY.X
-        lde f32t, t5, BODY.Y
-
-        # Calculate normal vector
-        fsub t6, t0, t4 # dx
-        fsub t7, t1, t5 # dy
-        fpow t8, t6, 2.0
-        fpow t9, t7, 2.0
-        fadd t8, t9 # r^2
-        fsqrt t8 # r
-        fdiv t6, t8 # dx/r
-        fdiv t7, t8 # dy/r
-        fneg t0, t7 # x^
-        mov t1, t6 # y^
-
-        fmul t10, a0, PLAYER.SPEED
-        fmul t0, t10
-        fmul t1, t10
-        fadd t2, t0
-        fadd t3, t1
-        str f32t, PLAYER.movex, t2
-        str f32t, PLAYER.movey, t3
-
-        .flip_sprite:
-            cmp neq, a0, 0.0
-            jfs @end+
-            mov t0, 0
-            cmp flt, a0, 0.0
-            mvc t0, 1
-            str u8t, PLAYER.flip_sprite, t0
-        @end:
-        jmp @endif+
-    @else:
-        lod f32t, t0, PLAYER.velx
-        lod f32t, t1, PLAYER.vely
-        lod f32t, t2, dt
-        fmul a0, PLAYER.THRUSTER_STRENGTH
-        fmul a1, PLAYER.THRUSTER_STRENGTH
-        ffma t0, a0, t2, t0
-        ffma t1, a1, t2, t1
-        str f32t, PLAYER.velx, t0
-        str f32t, PLAYER.vely, t1
-        str u8t, smoke_can_spawn, true
-        str u8t, PLAYER.is_flying, true
-        # Update rotation to match movement
-        fatan2 t2, a1, a0
-        fmod t2, 2.0*PI
-        mov t3, 0.0
-        cmp flt, t2, 0.0
-        mvc t3, 2.0*PI
-        fadd t2, t3
-        str f32t, PLAYER.rot, t2
-
-
-    @endif:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Charge Jump"
-charge_jump:
-    # > a0: UP/DOWN input
-
-    lod u8t, cr, PLAYER.grounded
-    jfs @end+
-
-    fmul t0, a0, PLAYER.JUMP_CHARGE_SPEED
-    lod f32t, t1, dt
-    fmul t0, t1
-
-    lod f32t, t1, PLAYER.jump_charge
-    fadd t0, t1
-
-    fclp t0, PLAYER.MIN_JUMP_CHARGE, PLAYER.MAX_JUMP_CHARGE
-    str f32t, PLAYER.jump_charge, t0
-
-    .if_charge_changed:
-        cmp neq, t0, t1
-        jfs @end+
-        mov a0, Strings.jump_charge
-        syscall SYS_PRINT_STRING
-        fcti a0, t0
-        syscall SYS_PRINT_LINE_INT
-    @end:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Player Jump"
-player_jump:
-    lod u8t, t0, PLAYER.grounded
-    cmp eq, t0, true
-    jfs @end+
-    lod u8t, t0, PLAYER.parent_body_index
-    cea bodies, t0, BODY.SIZE
-    lod f32t, t0, PLAYER.x
-    lod f32t, t1, PLAYER.y
-    lod f32t, t2, PLAYER.velx
-    lod f32t, t3, PLAYER.vely
-    lde f32t, t4, BODY.X
-    lde f32t, t5, BODY.Y
-
-    # Calculate normal vector
-    fsub t6, t0, t4 # dx
-    fsub t7, t1, t5 # dy
-    fpow t8, t6, 2.0
-    fpow t9, t7, 2.0
-    fadd t8, t9 # r^2
-    fsqrt t8 # r
-    fdiv t6, t8 # dx/r
-    fdiv t7, t8 # dy/r
-    lod f32t, t9, PLAYER.jump_charge
-
-    # Jump impulse vector
-    fmul t6, t9
-    fmul t7, t9
-
-    fadd t2, t6
-    fadd t3, t7
-    str f32t, PLAYER.velx, t2
-    str f32t, PLAYER.vely, t3
-    #str u8t, false, PLAYER.grounded
-
-    # Apply impulse to parent body
-    fneg a0, t6
-    fneg a1, t7
-    lod u8t, a2, PLAYER.parent_body_index
-    cal apply_impulse
-
-
-    @end:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Player Kill Velocity"
-player_kill_velocity:
-    # Kills player velocity. Useful for recovering after flinging yourself
-
-    lod f32t, t0, PLAYER.velx
-    lod f32t, t1, PLAYER.vely
-
-    .if_player_grounded: # If player is grounded, match parent body velocity
-        lod u8t, cr, PLAYER.grounded
-        jfs @else+
-        lod u8t, t2, PLAYER.parent_body_index
-        cea bodies, t2, BODY.SIZE
-        lde f32t, t3, BODY.VX
-        lde f32t, t4, BODY.VY
-        str f32t, PLAYER.velx, t3
-        str f32t, PLAYER.vely, t4
-        jmp @end+
-    @else:
-        lod f32t, t0, PLAYER.velx
-        lod f32t, t1, PLAYER.vely
-        lod f32t, t2, dt
-        fmul t2, PLAYER.THRUSTER_STRENGTH
-        fdiv t2, 5.0
-        flrp t3, t0, 0.0, t2
-        flrp t4, t1, 0.0, t2
-        str f32t, PLAYER.velx, t3
-        str f32t, PLAYER.vely, t4
-        str u8t, smoke_can_spawn, true
-        str u8t, PLAYER.is_flying, true
-        # Update rotation
-        fatan2 t2, t1, t0
-        fmod t2, 2.0*PI
-        mov t3, 0.0
-        cmp flt, t2, 0.0
-        mvc t3, 2.0*PI
-        fadd t2, t3
-        fadd t2, PI
-        str f32t, PLAYER.rot, t2
-
-    @end:
     ret
 
 #-------------------------------------------------------------------------------
@@ -785,8 +539,8 @@ update_positions:
         lod f32t, t4, dt
         fmul t2, t4
         fmul t3, t4
-        @if_timescale_lt_0:
-            cmp flt, TIME_SCALE, 0.0
+        @if_timescale_lt_1:
+            cmp flt, TIME_SCALE, 1.0
             jfs @endif+
             fmul t2, TIME_SCALE
             fmul t3, TIME_SCALE
@@ -800,38 +554,11 @@ update_positions:
         jmp @loop_bodies-
     @endloop_bodies:
 
-    lod f32t, t0, PLAYER.x
-    lod f32t, t1, PLAYER.y
-    lod f32t, t2, PLAYER.velx
-    lod f32t, t3, PLAYER.vely
 
-    lod f32t, t4, PLAYER.movex
-    lod f32t, t5, PLAYER.movey
-    fadd t2, t4
-    fadd t3, t5
-    # Apply distance scaling
-    lod f32t, t10, distance_scale
-    fdiv t2, t10
-    fdiv t3, t10
-
-    # Apply deltatime
-    lod f32t, t4, dt
-    fmul t2, t4
-    fmul t3, t4
-    @if_timescale_lt_0:
-        cmp flt, TIME_SCALE, 0.0
-        jfs @endif+
-        fmul t2, TIME_SCALE
-        fmul t3, TIME_SCALE
-    @endif:
-    fadd t0, t2
-    fadd t1, t3
-    str f32t, PLAYER.x, t0
-    str f32t, PLAYER.y, t1
-
+    # Player position
     .if_grounded:
         lod u8t, cr, PLAYER.grounded
-        jfs @else+
+        jfs @end+
         lod f32t, t0, PLAYER.x
         lod f32t, t1, PLAYER.y
         lod u8t, t2, PLAYER.parent_body_index
@@ -839,10 +566,11 @@ update_positions:
         lde f32t, t3, BODY.X
         lde f32t, t4, BODY.Y
         lde f32t, t5, BODY.R
-        lod f32t, t7, PLAYER.collision_radius
-        fadd t5, t7
+        lod f32t, t6, PLAYER.collision_radius
+        fadd t5, t6
         lod f32t, t6, distance_scale
         fdiv t5, t6
+
 
         fsub t6, t0, t3 # dx
         fsub t7, t1, t4 # dy
@@ -852,10 +580,37 @@ update_positions:
         fsqrt t8 # r
         fdiv t6, t8 # dx/r
         fdiv t7, t8 # dy/r
-        ffma t8, t6, t5, t3
-        ffma t9, t7, t5, t4
-        str f32t, PLAYER.x, t8
-        str f32t, PLAYER.y, t9
+        ffma t0, t5, t3
+        ffma t1, t5, t4
+
+        @if_timescale_lt_1:
+            cmp flt, TIME_SCALE, 1.0
+            jfs @endif+
+            fmul t0, TIME_SCALE
+            fmul t1, TIME_SCALE
+        @endif:
+
+        #fadd t0, t2
+        #fadd t1, t3
+        str f32t, PLAYER.x, t0
+        str f32t, PLAYER.y, t1
+
+
+
+
+        #ffma t8, t6, t5, t3
+        #ffma t9, t7, t5, t4
+        #fneg t12, t7 # x^
+        #mov t13, t6 # y^
+        #lod f32t, t14, PLAYER.movex
+        #lod f32t, t15, PLAYER.movey
+        #fmul t12, t14
+        #fmul t13, t15
+        #lod f32t, t14, dt
+        #fmul t12, t14
+        #fmul t13, t14
+        #fadd t8, t12
+        #fadd t9, t13
         # Update player rotation
         fatan2 t10, t7, t6
         fmod t10, 2.0*PI
@@ -866,7 +621,36 @@ update_positions:
         str f32t, PLAYER.rot, t10
         jmp @end+
     @else:
-        .is_not_flying:
+        lod f32t, t0, PLAYER.x
+        lod f32t, t1, PLAYER.y
+        lod f32t, t2, PLAYER.velx
+        lod f32t, t3, PLAYER.vely
+
+        lod f32t, t4, PLAYER.movex
+        lod f32t, t5, PLAYER.movey
+        fadd t2, t4
+        fadd t3, t5
+        # Apply distance scaling
+        lod f32t, t10, distance_scale
+        fdiv t2, t10
+        fdiv t3, t10
+
+        # Apply deltatime
+        lod f32t, t4, dt
+        fmul t2, t4
+        fmul t3, t4
+        @if_timescale_lt_1:
+            cmp flt, TIME_SCALE, 1.0
+            jfs @endif+
+            fmul t2, TIME_SCALE
+            fmul t3, TIME_SCALE
+        @endif:
+        fadd t0, t2
+        fadd t1, t3
+        str f32t, PLAYER.x, t0
+        str f32t, PLAYER.y, t1
+
+        .is_flying:
             lod u8t, cr, PLAYER.is_flying
             jtr @endif+
             lod f32t, t0, PLAYER.velx
@@ -1034,7 +818,7 @@ update_smoke:
 
     mov s0, zr
     @loop:
-        cmp lt, s0, SMOKE.MAX_PARTICLE_COUNT
+        cmp lt, s0, SMOKE.MAX_SMOKE_COUNT
         jfs @endloop+
         cea smoke, s0, SMOKE.SIZE
         lde f32t, t0, SMOKE.X
@@ -1055,8 +839,8 @@ update_smoke:
             fdiv t4, t6
             fadd t0, t2
             fadd t1, t3
-            @if_timescale_lt_0:
-                cmp flt, TIME_SCALE, 0.0
+            @if_timescale_lt_1:
+                cmp flt, TIME_SCALE, 1.0
                 jfs @endif2+
                 fmul t0, TIME_SCALE
                 fmul t1, TIME_SCALE
@@ -1080,278 +864,284 @@ update_smoke:
     vpop s0..s1
     ret
 
+#-------------------------------------------------------------------------------
+bmk "Input"
 
 #-------------------------------------------------------------------------------
-bmk "Drawing"
-
-#-------------------------------------------------------------------------------
-sbmk "Draw Player"
-draw_player:
-
-    .if_zoomed_in:
-        lod f32t, t0, distance_scale
-        cmp fgt, t0, ZOOM_IN_VAL
-        jtr @else+
-        mov a0, PLAYER_SPRITESHEET
-        lod f32t, t0, PLAYER.x
-        lod f32t, t1, PLAYER.y
-        fadd t0, CENTER_X_F
-        fadd t1, CENTER_Y_F
-        frou a1, t0
-        frou a2, t1
-        fcti a1
-        fcti a2
-        sub a1, PLAYER_SPRITE_WIDTH/2
-        sub a2, PLAYER_SPRITE_WIDTH/2
-        lod f32t, t2, PLAYER.rot
-        fdiv a3, t2, PI/4.0
-        frou a3
-        fcti a3
-        mod a3, 8
-        mul a3, PLAYER_SPRITE_WIDTH
-        lod u8t, a4, PLAYER.flip_sprite
-        mul a4, PLAYER_SPRITE_WIDTH
-        mov a5, PLAYER_SPRITE_WIDTH
-        mov a6, PLAYER_SPRITE_WIDTH
-        mov a7, 0
-        #lod u8t, a7, PLAYER.flip_sprite
-        syscall SYS_DRAW_TEXTURE_REGION
-        jmp @end+
-    @else:
-        lod f32t, t0, PLAYER.x
-        lod f32t, t1, PLAYER.y
-        # Get normal vector to parent body
-        lod u8t, t2, PLAYER.parent_body_index
-        cea bodies, t2, BODY.SIZE
-        lde f32t, t2, BODY.X
-        lde f32t, t3, BODY.Y
-        fsub t4, t2, t0
-        fsub t5, t3, t1
-        fpow t6, t4, 2.0
-        fpow t7, t5, 2.0
-        fadd t6, t7
-        fsqrt t6
-        fdiv t4, t6
-        fdiv t5, t6
-        lod f32t, t6, PLAYER.collision_radius
-        lod f32t, t7, distance_scale
-        fdiv t6, t7
-        fmul t4, t6
-        fmul t5, t6
-        fadd t0, t4
-        fadd t1, t5
-        fadd t0, CENTER_X_F
-        fadd t1, CENTER_Y_F
-        frou t0
-        frou t1
-        fcti t0
-        fcti t1
-        # Draw player as a dot
-        .is_offscreen:
-            cmp lt, t0, 0
-            jtr @end+
-            cmp lt, t1, 0
-            jtr @end+
-            cmp lt, t0, SCREEN_WIDTH
-            jfs @end+
-            cmp lt, t1, SCREEN_HEIGHT
-            jfs @end+
-            sbpx t0, t1, 255
-        #@end:
-    #lod f32t, t2, PLAYER.rot
-    #fdiv t2, PI/4.0
-    #fcti t2
-    #mul t2, .SPRITE_WIDTH
-    #mov a3, t2
-    #mov a4, 16
-    #mov a5, .SPRITE_WIDTH
-    #mov a6, .SPRITE_WIDTH
-    #lod u8t, a7, PLAYER.flipped
-    #syscall SYS_DRAW_TEXTURE_REGION
-
-    @end:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Draw Bodies"
-draw_bodies:
-    # s0: body index
-    psh s0
-
-    mov s0, zr
-    @loop:
-        lod u8t, t0, bodies_count
-        cmp lt, s0, t0
-        jfs @endloop+
-
-        cea bodies, s0, BODY.SIZE
-        lde f32t, t0, BODY.X
-        lde f32t, t1, BODY.Y
-        fadd a0, t0, CENTER_X_F
-        fadd a1, t1, CENTER_Y_F
-        lde f32t, a2, BODY.R
-        lod f32t, t1, distance_scale
-        fdiv a2, t1
-        mov a3, BODY_LUMA/2
-        lod u8t, cr, zoom_toggled
-        mvc a3, BODY_LUMA
-        cal draw_circle
-
-        .if_show_vectors:
-            mov cr, DRAW_VELOCITIES
-            jfs @endif+
-            cea bodies, s0, BODY.SIZE
-            lde f32t, t0, BODY.X
-            lde f32t, t1, BODY.Y
-            fadd a0, t0, CENTER_X_F
-            fadd a1, t1, CENTER_Y_F
-            lde f32t, t2, BODY.VX
-            lde f32t, t3, BODY.VY
-            ffma a2, t2, VELOCITY_VISUAL_SCALE, a0
-            ffma a3, t3, VELOCITY_VISUAL_SCALE, a1
-            cal draw_line
-        @endif:
-
-        inc s0
-        jmp @loop-
-    @endloop:
-    pop s0
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Draw Smoke"
-draw_smoke:
-    mov t15, zr
-    @loop:
-        cmp lt, t15, SMOKE.MAX_PARTICLE_COUNT
-        jfs @endloop+
-        cea smoke, t15, SMOKE.SIZE
-        lde f32t, t0, SMOKE.X
-        lde f32t, t1, SMOKE.Y
-        lde f32t, t2, SMOKE.LIFESPAN
-        .if_smoke_alive:
-            cmp fgt, t2, 0.0
-            jfs @endif+
-            fadd t0, CENTER_X_F
-            fadd t1, CENTER_Y_F
-            frou t0
-            frou t1
-            fcti t0
-            fcti t1
-            .if_in_bounds:
-                cmp gt, t0, 0
-                jfs @endif2+
-                cmp gt, t1, 0
-                jfs @endif2+
-                cmp lt, t0, SCREEN_WIDTH
-                jfs @endif2+
-                cmp lt, t1, SCREEN_HEIGHT
-                jfs @endif2+
-                mov t3, 100 # Use a dimmer color when zoomed out
-                lod u8t, cr, zoom_toggled
-                mvc t3, 255
-                sbpx t0, t1, t3
-            @endif2:
-        @endif:
-    inc t15
-    jmp @loop-
-    @endloop:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Draw Circle"
-draw_circle:
-    # > (f32t) a0..a1: x,y center
-    # > (f32t) a2: radius
-    # > (u8t) a3: luma
-
-    .is_circle_offscreen:
-        fadd t0, a0, a2
-        cmp flt, t0, 0.0
-        jtr @end+
-        fadd t0, a1, a2
-        cmp flt, t0, 0.0
-        jtr @end+
-        fsub t0, a0, a2
-        cmp fgt, t0, SCREEN_WIDTH_F
-        jtr @end+
-        fsub t0, a1, a2
-        cmp fgt, t0, SCREEN_HEIGHT_F
-        jtr @end+
-
-    fdiv t14, 1.0, a2 # How much to increment angle by
-    mov t15, zr # t15: angle
-    @loop:
-        fcos t0, t15 # t0: r*cos(t) = x
-        ffma t0, a2, a0
-        fsin t1, t15 # t1: r*sin(t) = y
-        ffma t1, a2, a1
-        fcti t0
-        fcti t1
-        .if_in_bounds:
-            cmp gt, t0, 0
-            jfs @endif+
-            cmp gt, t1, 0
-            jfs @endif+
-            cmp lt, t0, SCREEN_WIDTH
-            jfs @endif+
-            cmp lt, t1, SCREEN_HEIGHT
-            jfs @endif+
-            sbpx t0, t1, a3
-        @endif:
-        fadd t15, t14 # increment angle
-        cmp fgt, t15, 2.0*PI
-        jtr @end+
-        jmp @loop-
-    @end:
-    ret
-
-#-------------------------------------------------------------------------------
-sbmk "Draw Line"
-draw_line:
-    # > a0..a1: start x,y
-    # > a2..a3: end x,y
+sbmk "Check Input"
+check_input:
+    # Get input states
+    # s0: Left - Right
+    # s1: Up - Down
+    # s2: Jump
+    # s3: Kill Velocity
 
     vpsh s0..s3
-    mov s0, a0
-    mov s1, a1
-    mov s2, a2
-    mov s3, a3
-    fsub t0, s2, s0
-    fsub t1, s3, s1
-    fpow t4, t0, 2.0
-    fpow t5, t1, 2.0
-    fadd t4, t5
-    fsqrt t4 # Length
-    fatan2 t7, t1, t0
-    fcos t2, t7 # dx
-    fsin t3, t7 # dy
-    mov t0, s0
-    mov t1, s1
-    mov t15, zr
-    @loop:
-        frou t5, t0
-        frou t6, t1
-        fcti t5
-        fcti t6
-        .if_in_bounds:
-            cmp gt, t5, 0
+
+    syscall SYS_GET_INPUT
+    and t0, a0, BTN_LEFT
+    cmp neq, t0, 0
+    fctf t0, cr
+    and t1, a0, BTN_RIGHT
+    cmp neq, t1, 0
+    fctf t1, cr
+    and t2, a0, BTN_UP
+    cmp neq, t2, 0
+    fctf t2, cr
+    and t3, a0, BTN_DOWN
+    cmp neq, t3, 0
+    fctf t3, cr
+    fneg t0
+    fneg t2
+    fadd s0, t0, t1
+    fadd s1, t2, t3
+
+    and t0, a0, Input.JUMP
+    cmp neq, t0, 0
+    mov s2, cr
+
+    and t0, a0, Input.KILL_VELOCITY
+    cmp neq, t0, 0
+    mov s3, cr
+
+    str u8t, PLAYER.is_flying, false
+    str i8t, control_camera_offset_scalar, 0
+
+    .is_grounded:
+        lod u8t, cr, PLAYER.grounded
+        jfs @end+
+        str f32t, PLAYER.movex, 0.0 # Reset movement
+        str f32t, PLAYER.movey, 0.0
+        .is_jump_pressed:
+            lod u8t, cr, PLAYER.can_jump # Check if jump is enabled
+            and cr, s2
+            jfs @else+
+            cal charge_jump
+            jmp @endif+
+        @else:
+            lod u8t, cr, PLAYER.is_charging
             jfs @endif+
-            cmp gt, t6, 0
-            jfs @endif+
-            cmp lt, t5, SCREEN_WIDTH
-            jfs @endif+
-            cmp lt, t6, SCREEN_HEIGHT
-            jfs @endif+
-            sbpx t5, t6, BODY_LUMA
+            cal player_jump
         @endif:
-        fadd t0, t2
-        fadd t1, t3
-        fadd t15, 1.0
-        cmp flt, t15, t4
-        jtr @loop-
+        fcti t0, s1
+        str i8t, control_camera_offset_scalar, t0
+
     @end:
+
+
+    @move:
+        lod u8t, cr, PLAYER.is_charging
+        jtr @end+
+        cmp neq, s0, 0
+        mov t0, cr
+        cmp neq, s1, 0
+        orr cr, t0
+        jfs @end+
+        mov a0, s0
+        mov a1, s1
+        cal player_move
+    @end:
+
+    @kill_velocity:
+        cmp eq, s3, 1
+        jfs @else+
+        cal player_kill_velocity
+        jmp @end+
+    @else:
+        mov cr, s2 # Only reenable jump if jump key is not being held
+        jtr @end+
+        str u8t, PLAYER.can_jump, true
+    @end:
+
+
+
     vpop s0..s3
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Player Move"
+player_move:
+    # a0: horizontal direction
+    # a1: vertical direction
+
+    .if_grounded:
+        lod u8t, cr, PLAYER.grounded
+        jfs @else+
+        cmp neq, a0, 0.0
+        jfs @endif+
+        lod u8t, t0, PLAYER.parent_body_index
+        cea bodies, t0, BODY.SIZE
+        lod f32t, t0, PLAYER.x
+        lod f32t, t1, PLAYER.y
+        lod f32t, t2, PLAYER.velx
+        lod f32t, t3, PLAYER.vely
+        lde f32t, t4, BODY.X
+        lde f32t, t5, BODY.Y
+
+        # Calculate normal vector
+        fsub t6, t0, t4 # dx
+        fsub t7, t1, t5 # dy
+        fpow t8, t6, 2.0
+        fpow t9, t7, 2.0
+        fadd t8, t9 # r^2
+        fsqrt t8 # r
+        fdiv t6, t8 # dx/r
+        fdiv t7, t8 # dy/r
+        fneg t0, t7 # x^
+        mov t1, t6 # y^
+
+        fmul t10, a0, PLAYER.SPEED
+        fmul t0, t10
+        fmul t1, t10
+        fadd t2, t0
+        fadd t3, t1
+        str f32t, PLAYER.movex, t2
+        str f32t, PLAYER.movey, t3
+        jmp @endif+
+    @else:
+        lod f32t, t0, PLAYER.velx
+        lod f32t, t1, PLAYER.vely
+        lod f32t, t2, dt
+        fmul a0, PLAYER.THRUSTER_STRENGTH
+        fmul a1, PLAYER.THRUSTER_STRENGTH
+        ffma t0, a0, t2, t0
+        ffma t1, a1, t2, t1
+        str f32t, PLAYER.velx, t0
+        str f32t, PLAYER.vely, t1
+        str u8t, smoke_can_spawn, true
+        str u8t, PLAYER.is_flying, true
+        # Update rotation to match movement
+        fatan2 t2, a1, a0
+        fmod t2, 2.0*PI
+        mov t3, 0.0
+        cmp flt, t2, 0.0
+        mvc t3, 2.0*PI
+        fadd t2, t3
+        str f32t, PLAYER.rot, t2
+    @endif:
+    .flip_sprite:
+        cmp neq, a0, 0.0
+        jfs @end+
+        mov t0, 0
+        cmp flt, a0, 0.0
+        mvc t0, 1
+        str u8t, PLAYER.flip_sprite, t0
+    @end:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Charge Jump"
+charge_jump:
+    str u8t, PLAYER.is_charging, true
+    lod f32t, t0, dt
+    fmul t0, PLAYER.JUMP_CHARGE_SPEED
+
+    lod f32t, t1, PLAYER.jump_charge
+    fadd t0, t1
+
+    fclp t0, PLAYER.MIN_JUMP_CHARGE, PLAYER.MAX_JUMP_CHARGE
+    str f32t, PLAYER.jump_charge, t0
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Player Jump"
+player_jump:
+    str u8t, PLAYER.is_charging, false
+    lod u8t, t0, PLAYER.parent_body_index
+    cea bodies, t0, BODY.SIZE
+    lod f32t, t0, PLAYER.x
+    lod f32t, t1, PLAYER.y
+    lod f32t, t2, PLAYER.velx
+    lod f32t, t3, PLAYER.vely
+    lde f32t, t4, BODY.X
+    lde f32t, t5, BODY.Y
+
+    # Calculate normal vector
+    fsub t6, t0, t4 # dx
+    fsub t7, t1, t5 # dy
+    fpow t8, t6, 2.0
+    fpow t9, t7, 2.0
+    fadd t8, t9 # r^2
+    fsqrt t8 # r
+    fdiv t6, t8 # dx/r
+    fdiv t7, t8 # dy/r
+    lod f32t, t9, PLAYER.jump_charge
+
+    # Jump impulse vector
+    fmul t6, t9
+    fmul t7, t9
+
+    fadd t2, t6
+    fadd t3, t7
+    str f32t, PLAYER.velx, t2
+    str f32t, PLAYER.vely, t3
+    #str u8t, false, PLAYER.grounded
+
+    # Apply impulse to parent body
+    fneg a0, t6
+    fneg a1, t7
+    lod u8t, a2, PLAYER.parent_body_index
+    cal apply_impulse
+
+    str f32t, PLAYER.jump_charge, PLAYER.MIN_JUMP_CHARGE
+    @end:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Player Kill Velocity"
+player_kill_velocity:
+    # Kills player velocity. Useful for recovering after flinging yourself
+
+    lod f32t, t0, PLAYER.velx
+    lod f32t, t1, PLAYER.vely
+
+    .if_player_grounded: # If player is grounded, match parent body velocity
+        lod u8t, cr, PLAYER.grounded
+        jfs @else+
+        lod u8t, t2, PLAYER.parent_body_index
+        cea bodies, t2, BODY.SIZE
+        lde f32t, t3, BODY.VX
+        lde f32t, t4, BODY.VY
+        str f32t, PLAYER.velx, t3
+        str f32t, PLAYER.vely, t4
+        str u8t, PLAYER.is_charging, false
+        str f32t, PLAYER.jump_charge, PLAYER.MIN_JUMP_CHARGE
+        jmp @end+
+    @else:
+        # Calculate normal vector
+        lod f32t, t0, PLAYER.velx
+        lod f32t, t1, PLAYER.vely
+        fpow t2, t0, 2.0
+        fpow t3, t1, 2.0
+        fadd t2, t3
+        fsqrt t2
+        fdiv a0, t0, t2
+        fdiv a1, t1, t2
+        fneg a0
+        fneg a1
+        cal player_move
+
+
+        #mov a0, t3
+        #syscall SYS_PRINT_LINE_FLOAT
+        #mov a0, t4
+        #syscall SYS_PRINT_LINE_FLOAT
+        #str f32t, PLAYER.velx, t3
+        #str f32t, PLAYER.vely, t4
+        #str u8t, smoke_can_spawn, true
+        #str u8t, PLAYER.is_flying, true
+        ## Update rotation
+        #fatan2 t2, t1, t0
+        #fmod t2, 2.0*PI
+        #mov t3, 0.0
+        #cmp flt, t2, 0.0
+        #mvc t3, 2.0*PI
+        #fadd t2, t3
+        #fadd t2, PI
+        #str f32t, PLAYER.rot, t2
+
+    @end:
+    str u8t, PLAYER.can_jump, false # Don't allow jumping until both keys are released
     ret
 
 #-------------------------------------------------------------------------------
@@ -1504,8 +1294,8 @@ get_gravity_vector:
     fmul t3, t4
 
     # Apply timescale
-    @if_timescale_lt_0:
-        cmp flt, TIME_SCALE, 0.0
+    @if_timescale_lt_1:
+        cmp flt, TIME_SCALE, 1.0
         jfs @endif+
         fmul t3, TIME_SCALE
     @endif:
@@ -1559,8 +1349,6 @@ get_collision_vector:
     fmul a1, t1, t3
     ret
 
-
-
 #-------------------------------------------------------------------------------
 sbmk "Apply Impulse"
 apply_impulse:
@@ -1583,6 +1371,309 @@ apply_impulse:
     ret
 
 #-------------------------------------------------------------------------------
+bmk "Drawing"
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Player"
+draw_player:
+
+    .if_zoomed_in:
+        lod f32t, t0, distance_scale
+        cmp fgt, t0, ZOOM_IN_VAL
+        jtr @else+
+        mov a0, PLAYER_SPRITESHEET
+        lod f32t, t0, PLAYER.x
+        lod f32t, t1, PLAYER.y
+        fadd t0, CENTER_X_F
+        fadd t1, CENTER_Y_F
+        frou a1, t0
+        frou a2, t1
+        fcti a1
+        fcti a2
+        sub a1, PLAYER_SPRITE_WIDTH/2
+        sub a2, PLAYER_SPRITE_WIDTH/2
+        lod f32t, t2, PLAYER.rot
+        fdiv a3, t2, PI/4.0
+        frou a3
+        fcti a3
+        mod a3, 8
+        mul a3, PLAYER_SPRITE_WIDTH
+        lod u8t, a4, PLAYER.flip_sprite
+        mul a4, PLAYER_SPRITE_WIDTH
+        mov a5, PLAYER_SPRITE_WIDTH
+        mov a6, PLAYER_SPRITE_WIDTH
+        mov a7, 0
+        #lod u8t, a7, PLAYER.flip_sprite
+        syscall SYS_DRAW_TEXTURE_REGION
+        jmp @end+
+    @else:
+        lod f32t, t0, PLAYER.x
+        lod f32t, t1, PLAYER.y
+        # Get normal vector to parent body
+        lod u8t, t2, PLAYER.parent_body_index
+        cea bodies, t2, BODY.SIZE
+        lde f32t, t2, BODY.X
+        lde f32t, t3, BODY.Y
+        fsub t4, t2, t0
+        fsub t5, t3, t1
+        fpow t6, t4, 2.0
+        fpow t7, t5, 2.0
+        fadd t6, t7
+        fsqrt t6
+        fdiv t4, t6
+        fdiv t5, t6
+        lod f32t, t6, PLAYER.collision_radius
+        lod f32t, t7, distance_scale
+        fdiv t6, t7
+        fmul t4, t6
+        fmul t5, t6
+        fadd t0, t4
+        fadd t1, t5
+        fadd t0, CENTER_X_F
+        fadd t1, CENTER_Y_F
+        frou t0
+        frou t1
+        fcti t0
+        fcti t1
+        # Draw player as a dot
+        .is_offscreen:
+            cmp lt, t0, 0
+            jtr @end+
+            cmp lt, t1, 0
+            jtr @end+
+            cmp lt, t0, SCREEN_WIDTH
+            jfs @end+
+            cmp lt, t1, SCREEN_HEIGHT
+            jfs @end+
+            sbpx t0, t1, 255
+    @end:
+
+    .if_show_vectors:
+        mov cr, DRAW_VELOCITIES
+        jfs @endif+
+        lod f32t, t0, PLAYER.x
+        lod f32t, t1, PLAYER.y
+        fadd a0, t0, CENTER_X_F
+        fadd a1, t1, CENTER_Y_F
+        lod f32t, t2, PLAYER.velx
+        lod f32t, t3, PLAYER.vely
+        ffma a2, t2, VELOCITY_VISUAL_SCALE, a0
+        ffma a3, t3, VELOCITY_VISUAL_SCALE, a1
+        mov a4, VELOCITY_VECTOR_START_LUMA
+        mov a5, VELOCITY_VECTOR_END_LUMA
+        cal draw_gradient_line
+    @endif:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Bodies"
+draw_bodies:
+    # s0: body index
+    psh s0
+
+    mov s0, zr
+    @loop:
+        lod u8t, t0, bodies_count
+        cmp lt, s0, t0
+        jfs @endloop+
+
+        cea bodies, s0, BODY.SIZE
+        lde f32t, t0, BODY.X
+        lde f32t, t1, BODY.Y
+        fadd a0, t0, CENTER_X_F
+        fadd a1, t1, CENTER_Y_F
+        lde f32t, a2, BODY.R
+        lod f32t, t1, distance_scale
+        fdiv a2, t1
+        lod f32t, t4, distance_scale
+        fcti t4
+        div t4, BODY_LUMA, t4
+        mul a3, t4, 2
+        lod u8t, cr, zoom_toggled
+        mvc a3, BODY_LUMA
+        cal DrawPAcircle
+
+        .if_show_vectors:
+            mov cr, DRAW_VELOCITIES
+            jfs @endif+
+            cea bodies, s0, BODY.SIZE
+            lde f32t, t0, BODY.X
+            lde f32t, t1, BODY.Y
+            fadd a0, t0, CENTER_X_F
+            fadd a1, t1, CENTER_Y_F
+            lde f32t, t2, BODY.VX
+            lde f32t, t3, BODY.VY
+            ffma a2, t2, VELOCITY_VISUAL_SCALE, a0
+            ffma a3, t3, VELOCITY_VISUAL_SCALE, a1
+            mov a4, VELOCITY_VECTOR_START_LUMA
+            mov a5, VELOCITY_VECTOR_END_LUMA
+            cal draw_gradient_line
+        @endif:
+
+        inc s0
+        jmp @loop-
+    @endloop:
+    pop s0
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Background"
+draw_background:
+    lod f32t, t0, bg_offset_x
+    lod f32t, t1, bg_offset_y
+    frou t0
+    frou t1
+    fcti t0
+    fcti t1
+
+    mov a0, BACKGROUND_TEXTURE
+    vmov a1..a2, 0
+    vmov a3..a4, t0..
+    sub a5, BG_TEX_WIDTH, t0
+    sub a6, BG_TEX_HEIGHT, t1
+    mov a7, 0
+    syscall SYS_DRAW_TEXTURE_REGION
+    sub a1, BG_TEX_WIDTH, t0
+    mov a3, 0
+    mov a5, t0
+    syscall SYS_DRAW_TEXTURE_REGION
+    sub a2, BG_TEX_HEIGHT, t1
+    mov a4, 0
+    mov a6, t1
+    syscall SYS_DRAW_TEXTURE_REGION
+    mov a1, 0
+    mov a3, t0
+    sub a5, BG_TEX_WIDTH, t0
+    syscall SYS_DRAW_TEXTURE_REGION
+    ret
+
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Smoke"
+draw_smoke:
+    mov t15, zr
+    @loop:
+        cmp lt, t15, SMOKE.MAX_SMOKE_COUNT
+        jfs @endloop+
+        cea smoke, t15, SMOKE.SIZE
+        lde f32t, t0, SMOKE.X
+        lde f32t, t1, SMOKE.Y
+        lde f32t, t2, SMOKE.LIFESPAN
+        .if_smoke_alive:
+            cmp fgt, t2, 0.0
+            jfs @endif+
+            fadd t0, CENTER_X_F
+            fadd t1, CENTER_Y_F
+            frou t0
+            frou t1
+            fcti t0
+            fcti t1
+            .if_in_bounds:
+                cmp gt, t0, 0
+                jfs @endif2+
+                cmp gt, t1, 0
+                jfs @endif2+
+                cmp lt, t0, SCREEN_WIDTH
+                jfs @endif2+
+                cmp lt, t1, SCREEN_HEIGHT
+                jfs @endif2+
+                mov t3, 100 # Use a dimmer color when zoomed out
+                lod u8t, cr, zoom_toggled
+                mvc t3, 255
+                sbpx t0, t1, t3
+            @endif2:
+        @endif:
+    inc t15
+    jmp @loop-
+    @endloop:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw HUD"
+draw_hud:
+    def HUD_PADDING 2
+
+    # Text
+    mov a0, HUD_TEXTURE
+    mov a1, SCREEN_WIDTH - 108 - HUD_PADDING
+    mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
+    vmov a3..a4, 0
+    mov a5, 88
+    mov a6, 16
+    mov a7, 0
+    syscall SYS_DRAW_TEXTURE_REGION
+
+    mov a1, HUD_PADDING
+    mov a2, HUD_PADDING
+    mov a3, 0
+    mov a4, 16
+    mov a5, 88
+    mov a6, 32
+    mov a7, 0
+    syscall SYS_DRAW_TEXTURE_REGION
+
+    def CHARGE_BAR_X SCREEN_WIDTH - 16 - HUD_PADDING
+    def CHARGE_BAR_Y SCREEN_HEIGHT - (8*CHARGE_BAR_LENGTH) - HUD_PADDING
+
+    # Calculate jump charge bar length
+    lod f32t, t0, PLAYER.jump_charge
+    fsub t0, PLAYER.MIN_JUMP_CHARGE
+    fsub t1, PLAYER.MAX_JUMP_CHARGE, PLAYER.MIN_JUMP_CHARGE
+    fdiv t0, t1
+    fctf t2, 8*CHARGE_BAR_LENGTH
+    fsub t2, 12.0
+    fmul t0, t2
+    frou t0
+    fcti t0
+
+    # Draw charge bar
+    mov a0, CHARGE_BAR_X  + 4
+    mov a1, CHARGE_BAR_Y + 6
+    mov a2, 8
+    mov a3, 8*CHARGE_BAR_LENGTH-12
+    mov a4, 1
+    syscall SYS_DRAW_RECT
+
+    .if_charging:
+        cmp gt, t0, 0
+        jfs @endif+
+        #sub t0, 6
+        sub a1, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1) + 2, t0
+        mov a3, t0
+        mov a4, 255
+        syscall SYS_DRAW_RECT
+    @endif:
+
+    # Jump Bar top
+    mov a0, HUD_TEXTURE
+    mov a1, CHARGE_BAR_X
+    mov a2, CHARGE_BAR_Y
+    mov a3, 88
+    mov a4, 0
+    mov a5, 16
+    mov a6, 8
+    syscall SYS_DRAW_TEXTURE_REGION
+
+    # Jump Bar Middle
+    mov a4, 8
+    mov t0, zr
+    @loop:
+        mul t1, t0, 8
+        add a2, CHARGE_BAR_Y + 8, t1
+        syscall SYS_DRAW_TEXTURE_REGION
+        inc t0
+        cmp lt, t0, CHARGE_BAR_LENGTH-2
+        jtr @loop-
+
+    # Jump Bar Bottom
+    mov a2, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1)
+    mov a4, 24
+    mov a5, 16
+    mov a6, 8
+    syscall SYS_DRAW_TEXTURE_REGION
+    ret
+
+#-------------------------------------------------------------------------------
 bmk "Camera"
 
 #-------------------------------------------------------------------------------
@@ -1590,6 +1681,7 @@ sbmk "Move Camera"
 move_camera:
     # > a0..a1: Camera offset
 
+    # Move Bodies
     mov t15, zr # Object counter
     lod u8t, t14, bodies_count
     @loop:
@@ -1599,8 +1691,8 @@ move_camera:
         cea bodies, t15, BODY.SIZE
         lde f32t, t0, BODY.X
         lde f32t, t1, BODY.Y
-        fadd t0, a0
-        fadd t1, a1
+        fsub t0, a0
+        fsub t1, a1
         ste f32t, BODY.X, t0
         ste f32t, BODY.Y, t1
 
@@ -1608,15 +1700,16 @@ move_camera:
         jmp @loop-
     @endloop:
 
+    # Move Smoke
     mov t15, zr
     @loop:
-        cmp lt, t15, SMOKE.MAX_PARTICLE_COUNT
+        cmp lt, t15, SMOKE.MAX_SMOKE_COUNT
         jfs @endloop+
         cea smoke, t15, SMOKE.SIZE
         lde f32t, t0, SMOKE.X
         lde f32t, t1, SMOKE.Y
-        fadd t0, a0
-        fadd t1, a1
+        fsub t0, a0
+        fsub t1, a1
         ste f32t, SMOKE.X, t0
         ste f32t, SMOKE.Y, t1
 
@@ -1624,13 +1717,25 @@ move_camera:
         jmp @loop-
     @endloop:
 
+    # Move Player
     lod f32t, t0,  PLAYER.x
     lod f32t, t1,  PLAYER.y
-    fadd t0, a0
-    fadd t1, a1
+    fsub t0, a0
+    fsub t1, a1
     str f32t, PLAYER.x, t0
     str f32t, PLAYER.y, t1
 
+    # Update Background offset
+    lod f32t, t0, bg_offset_x
+    lod f32t, t1, bg_offset_y
+    fmul t2, a0, BG_SCROLL_SCALE
+    fmul t3, a1, BG_SCROLL_SCALE
+    fadd t0, t2
+    fadd t1, t3
+    fmod t0, BG_TEX_WIDTH_F
+    fmod t1, BG_TEX_HEIGHT_F
+    str f32t, bg_offset_x, t0
+    str f32t, bg_offset_y, t1
 
     ret
 
@@ -1639,19 +1744,22 @@ sbmk "Center Camera"
 center_camera:
     lod f32t, a0, PLAYER.x
     lod f32t, a1, PLAYER.y
-    fneg t0, a0
-    fneg t1, a1
     lod f32t, t2, distance_scale
     fdiv t2, CAMERA_SPEED, t2
 
+    mov t0, a0
+    mov t1, a1
     .if_grounded:
         lod u8t, cr, PLAYER.grounded
         jfs @endif+
         lod f32t, t3, PLAYER.rot
         fcos t4, t3
         fsin t5, t3
-        ffma t0, t4, -CAMERA_OFFSET, t0
-        ffma t1, t5, -CAMERA_OFFSET, t1
+        lod i8t, t6, control_camera_offset_scalar
+        fctf t6
+        ffma t6, -CAMERA_OFFSET, CAMERA_OFFSET
+        ffma t0, t4, t6, t0
+        ffma t1, t5, t6, t1
     @endif:
     flrp a0, 0.0, t0, t2
     flrp a1, 0.0, t1, t2
@@ -1784,4 +1892,312 @@ cmp_strings:
                 inc t1
                 jmp @loop-
     @endloop:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Circle"
+draw_circle:
+    # > (f32t) a0..a1: x,y center
+    # > (f32t) a2: radius
+    # > (u8t) a3: luma
+
+    .is_circle_offscreen:
+        fadd t0, a0, a2
+        cmp flt, t0, 0.0
+        jtr @end+
+        fadd t0, a1, a2
+        cmp flt, t0, 0.0
+        jtr @end+
+        fsub t0, a0, a2
+        cmp fgt, t0, SCREEN_WIDTH_F
+        jtr @end+
+        fsub t0, a1, a2
+        cmp fgt, t0, SCREEN_HEIGHT_F
+        jtr @end+
+
+    fdiv t14, 1.0, a2 # How much to increment angle by
+    mov t15, zr # t15: angle
+    @loop:
+        fcos t0, t15 # t0: r*cos(t) = x
+        ffma t0, a2, a0
+        fsin t1, t15 # t1: r*sin(t) = y
+        ffma t1, a2, a1
+        fcti t0
+        fcti t1
+        .if_in_bounds:
+            cmp gt, t0, 0
+            jfs @endif+
+            cmp gt, t1, 0
+            jfs @endif+
+            cmp lt, t0, SCREEN_WIDTH
+            jfs @endif+
+            cmp lt, t1, SCREEN_HEIGHT
+            jfs @endif+
+            sbpx t0, t1, a3
+        @endif:
+        fadd t15, t14 # increment angle
+        cmp fgt, t15, 2.0*PI
+        jtr @end+
+        jmp @loop-
+    @end:
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Line"
+draw_line:
+    # > a0..a1: start x,y
+    # > a2..a3: end x,y
+    # > a4: Luma
+
+    vpsh s0..s3
+    mov s0, a0
+    mov s1, a1
+    mov s2, a2
+    mov s3, a3
+    fsub t0, s2, s0
+    fsub t1, s3, s1
+    fpow t4, t0, 2.0
+    fpow t5, t1, 2.0
+    fadd t4, t5
+    fsqrt t4 # Length
+    fatan2 t7, t1, t0
+    fcos t2, t7 # dx
+    fsin t3, t7 # dy
+    mov t0, s0
+    mov t1, s1
+    mov t15, zr
+    @loop:
+        frou t5, t0
+        frou t6, t1
+        fcti t5
+        fcti t6
+        .if_in_bounds:
+            cmp gt, t5, 0
+            jfs @endif+
+            cmp gt, t6, 0
+            jfs @endif+
+            cmp lt, t5, SCREEN_WIDTH
+            jfs @endif+
+            cmp lt, t6, SCREEN_HEIGHT
+            jfs @endif+
+            sbpx t5, t6, a4
+        @endif:
+        fadd t0, t2
+        fadd t1, t3
+        fadd t15, 1.0
+        cmp flt, t15, t4
+        jtr @loop-
+    @end:
+    vpop s0..s3
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Draw Gradient Line"
+draw_gradient_line:
+    # > a0..a1: start x,y
+    # > a2..a3: end x,y
+    # > a4: start luma
+    # > a5: end luma
+
+    vpsh s0..s3
+    mov s0, a0
+    mov s1, a1
+    mov s2, a2
+    mov s3, a3
+    fsub t0, s2, s0
+    fsub t1, s3, s1
+    fpow t4, t0, 2.0
+    fpow t5, t1, 2.0
+    fadd t4, t5
+    fsqrt t4 # Length
+    fatan2 t7, t1, t0
+    fcos t2, t7 # dx
+    fsin t3, t7 # dy
+    mov t0, s0
+    mov t1, s1
+
+    sub t9, a5, a4
+    fctf t9
+    fdiv t9, t4
+    fflo t9
+    fcti t9
+    mov t14, a4
+    mov t15, zr
+    @loop:
+        frou t5, t0
+        frou t6, t1
+        fcti t5
+        fcti t6
+        .if_in_bounds:
+            cmp gt, t5, 0
+            jfs @endif+
+            cmp gt, t6, 0
+            jfs @endif+
+            cmp lt, t5, SCREEN_WIDTH
+            jfs @endif+
+            cmp lt, t6, SCREEN_HEIGHT
+            jfs @endif+
+            sbpx t5, t6, t14
+        @endif:
+        fadd t0, t2
+        fadd t1, t3
+        fadd t15, 1.0
+        add t14, t9
+        cmp flt, t15, t4
+        jtr @loop-
+    @end:
+    vpop s0..s3
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Get Vector Projection"
+project_vector:
+    # > a0..a1: source vector x,y
+    # > a2..a3: base vector x,y
+    # < a0..a1: result vector
+
+    # dot v1 v2
+    fmul t0, a0, a2
+    fmul t1, a1, a3
+    fadd t0, t1
+
+    # length squared
+    fpow t1, a2, 2.0
+    fpow t2, a3, 2.0
+    fadd t1, t2
+
+    # Scalar
+    fdiv t0, t1
+
+    fmul a0, t0
+    fmul a1, t0
+    ret
+
+
+#-------------------------------------------------------------------------------
+bmk "DrawLib"
+
+sbmk "DrawPAcircle(centre: vec2, radius: f32t)"
+## Author: lawrziepan
+## Draws a circle to the screen using a pixel-aligned centre and a float radius
+## Parameters:
+## > a0: centre
+## > a1: radius
+## Additional Implementation Notes:
+##  Because this function assumes a pixel-aligned centre, it actually only draws an eigth
+## of a circle, and copies it to the other 7 eigths. You can also use this with non-pixel
+## aligned circles, as it has very similar quality but is drawn much faster.
+
+# Modified to use a0..a1 as x,y directly, and a3 for the fill color
+
+DrawPAcircle:
+    vpsh s0..s9
+
+    mov s0, a0 # centre x
+    mov s1, a1 # centre y
+    mov s9, a3
+    mov s2, a2
+    fabs s2
+    mov t3, s2
+    mov s5, t3
+    fcti t3
+    neg s3, t3
+    fdiv s5, 2.0
+    fcti s5
+    neg s5
+    add s5, 1
+
+    fpow s8, s2, 2.0 # square radius
+
+    mov s4, s3 # counter
+    sub s4, 1
+    @loop:
+        cmp lte, s4, s5
+        jfs @endloop+
+
+        mov s6, s4
+        fctf s6 # y coordinate (0 centre)
+
+        mov s7, s6
+        fpow s7, 2.0
+        fsub s7, s8, s7
+        fsqrt s7 # x coordinate (0 centre)
+
+        fcei a2, s7
+        fmul a2, 2.0
+        fadd a2, -1.0
+        fcti a2
+
+        fsub t0, s1, s6
+        fsub t1, s0, s7
+
+        fflo t0
+        fcei t1
+
+        fcti t0
+        fcti t1
+
+        mov a0, t1
+        mov a1, t0
+        mov a3, 1
+        mov a4, s9
+        syscall SYS_DRAW_RECT # draw lower quarter
+
+        fadd t0, s1, s6
+        fcei t0
+        fcti t0
+
+        mov a1, t0
+        syscall SYS_DRAW_RECT # draw upper quarter
+
+        fcei a3, s7
+        fmul a3, 2.0
+        fadd a3, -1.0
+        fcti a3
+
+        fsub t0, s1, s7
+        fadd t1, s0, s6
+
+        fcei t0
+        fcei t1
+
+        fcti t0
+        fcti t1
+
+        mov a0, t1
+        mov a1, t0
+        mov a2, 1
+        mov a4, s9
+        syscall SYS_DRAW_RECT # draw left quarter
+
+        fsub t1, s0, s6
+        fflo t1
+        fcti t1
+        mov a0, t1
+        syscall SYS_DRAW_RECT # draw right quarter
+
+        inc s4
+        jmp @loop-
+    @endloop:
+
+    fmul s2, 0.5
+
+    # draw inner square
+    fsub a0, s0, s2
+    fsub a1, s1, s2
+
+    fcei a0
+    fcei a1
+
+    fcti a0
+    fcti a1
+
+    fmul a2, s2, 2.0
+    fflo a2
+    fcti a2
+    mov a3, a2
+    mov a4, s9
+    syscall SYS_DRAW_RECT
+
+    vpop s0..s9
     ret
