@@ -239,7 +239,7 @@ _start: # Runs once when the VM starts.
     mov a2, 0.0 # VELOCITY X
     mov a3, 0.0 # VELOCITY Y
     mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 5000.0 # RADIUS
+    mov a5, 15000.0 # RADIUS
     mov a6, 20000000000.0 # MASS
     mov a7, 50000 # LUMINOSITY
     cal add_body
@@ -249,15 +249,15 @@ _start: # Runs once when the VM starts.
     mov a2, 0.0 # VELOCITY X
     mov a3, 975.9 # VELOCITY Y
     mov a4, 2*PI/60 # ROTATIONAL ANGLUAR VELOCITY
-    mov a5, 50.0 # RADIUS
-    mov a6, 300000.0 # MASS
+    mov a5, 500.0 # RADIUS
+    mov a6, 600000.0 # MASS
     mov a7, 150 # LUMINOSITY
     cal add_body
 
-    mov a0, -150.0 # X
+    mov a0, -350.0 # X
     mov a1, 0.0 # Y
     mov a2, 0.0 # VELOCITY X
-    mov a3, 975.9 - 44.72 # VELOCITY Y
+    mov a3, 975.9 - 41.4 # VELOCITY Y
     mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
     mov a5, 10.0 # RADIUS
     mov a6, 50000.0 # MASS
