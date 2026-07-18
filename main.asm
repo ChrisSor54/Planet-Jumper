@@ -66,6 +66,7 @@ def ZOOM_STEP 2.0 # How much to change zoom when zoom commands are input
 def MAX_ZOOM 71.0 # Keep this at an odd number to avoid issues with sprite selection
 def MIN_ZOOM 1.0
 def CAMERA_SPEED 0.5
+def FREECAM_SPEED 100.0
 def CAMERA_OFFSET 50.0
 def GROUNDED_DISTANCE 1.0
     # How far the player must be from the parent body before the camera
@@ -73,8 +74,8 @@ def GROUNDED_DISTANCE 1.0
 
 def DRAW_BODY_VELOCITIES false # Draw velocity vectors for bodies (relative to the player)
 def DRAW_PLAYER_VELOCITY false # Draw velocity vector for the player (relative to the 'global position')
-def DRAW_ROTATIONAL_VELOCITY false # Add visual indicator to show planet rotation
-def VELOCITY_VISUAL_SCALE 1.0 # How much velocity vectors should be scaled
+def DRAW_ROTATIONAL_VELOCITY true   # Add visual indicator to show planet rotation
+def VELOCITY_VISUAL_SCALE 1.0       # How much velocity vectors should be scaled
 def VELOCITY_VECTOR_START_LUMA 10
 def VELOCITY_VECTOR_END_LUMA 255
 
@@ -92,6 +93,7 @@ Input:
     def .ZOOM_IN BTN_X
     def .ZOOM_OUT BTN_Y
     def .PAUSE BTN_START
+    def .FREE_CAM BTN_SELECT
 
 #-------------------------------------------------------------------------------
 bmk "STRUCTS"
@@ -206,6 +208,8 @@ bg_offset_y: emb f32t 0.0
 # Velocities are updated to be relative to the player
 global_velx: emb f32t 0.0
 global_vely: emb f32t 0.0
+freecam_pos_x: emb f32t 0.0
+freecam_pos_y: emb f32t 0.0
 
 control_camera_offset_scalar: emb i8t 0 # -1, 1, or 1, used for controlling the camera with up and down
 
@@ -221,6 +225,8 @@ smoke: res u8t SMOKE.SIZE*SMOKE.MAX_SMOKE_COUNT
 # Flags
 system_paused: emb u8t false # Used for pausing the game
 smoke_can_spawn: emb u8t false
+freecam_enabled: emb u8t false
+freecam_relative_velocity_enabled: emb u8t true
 #zoom_toggled: emb u8t true
 
 #-------------------------------------------------------------------------------
@@ -239,7 +245,7 @@ _start: # Runs once when the VM starts.
     mov a2, 0.0 # VELOCITY X
     mov a3, 0.0 # VELOCITY Y
     mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 24000.0 # RADIUS
+    mov a5, 5000.0 # RADIUS
     mov a6, 20000000000.0 # MASS
     mov a7, 50000 # LUMINOSITY
     cal add_body
@@ -250,26 +256,26 @@ _start: # Runs once when the VM starts.
     mov a3, 766.96 # VELOCITY Y
     mov a4, 2*PI/600 # ROTATIONAL ANGLUAR VELOCITY
     mov a5, 250.0 # RADIUS
-    mov a6, 800000.0 # MASS
+    mov a6, 8000000.0 # MASS
     mov a7, 200 # LUMINOSITY
     cal add_body
 
     mov a0, -350.0 # X
     mov a1, 0.0 # Y
     mov a2, 0.0 # VELOCITY X
-    mov a3, 766.96 - 47.81 # VELOCITY Y
+    mov a3, 766.96 - 151.19 # VELOCITY Y
     mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
     mov a5, 10.0 # RADIUS
     mov a6, 50000.0 # MASS
     mov a7, 150 # LUMINOSITY
     cal add_body
 
-    mov a0, -21000.0 + 10500.0 # X
+    mov a0, -5000.0 # X
     mov a1, 0.0 # Y
     mov a2, 0.0 # VELOCITY X
-    mov a3, 1380.13 # VELOCITY Y
-    mov a4, 2*PI # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 10.0 # RADIUS
+    mov a3, 830.45 # VELOCITY Y
+    mov a4, PI/10 # ROTATIONAL ANGULAR VELOCITY
+    mov a5, 100.0 # RADIUS
     mov a6, 7000.0 # MASS
     mov a7, 200 # LUMINOSITY
     cal add_body
@@ -312,11 +318,16 @@ _update: # Runs at 60 Hz.
         cal update_smoke
         jmp @iterate_update-
     @end:
-    mov a0, true
-    cal center_camera
-    pop s0
-    @pause_end:
 
+    @is_freecam_disabled:
+        lod u8t, cr, freecam_enabled
+        jtr @endif+
+        mov a0, true
+        cal center_camera
+        pop s0
+    @endif:
+
+    @pause_end:
 
     #lod u8t, a0, PLAYER.is_grounded
     #syscall SYS_PRINT_LINE_INT
@@ -339,7 +350,7 @@ sbmk "Input"
 _input: # Runs when input state changes.
     # React to player input here.
 
-    vpsh s0..s2
+    vpsh s0..s4
     syscall SYS_GET_INPUT
 
     # Zoom in
@@ -359,6 +370,16 @@ _input: # Runs when input state changes.
     and t0, a0, Input.PAUSE
     cmp neq, t0, 0
     mov s2, cr
+
+    # freecam
+    and t0, a0, Input.FREE_CAM
+    cmp neq, t0, 0
+    mov s3, cr
+
+    # Toggle velocity relativity
+    and t0, a0, Input.MATCH_VELOCITY
+    cmp neq, t0, 0
+    mov s4, cr
 
     @zoom:
         cmp neq, s0, 0.0
@@ -390,7 +411,30 @@ _input: # Runs when input state changes.
         str u8t, system_paused, cr
     @end:
 
-    vpop s0..s2
+    @toggle_freecam:
+        mov cr, s3
+        jfs @end+
+        str f32t, freecam_pos_x, 0.0
+        str f32t, freecam_pos_y, 0.0
+        lod u8t, t0, freecam_enabled
+        cmp eq, t0, false
+        str u8t, freecam_enabled, cr
+        jtr @end+
+        mov a0, false
+        cal center_camera # Center back on player if freecam is disabled
+    @end:
+
+    @toggle_relative_velocity: # Toggles freecam between player relative velocity and global velocity
+        mov cr, s4
+        jfs @end+
+        lod u8t, cr, freecam_enabled
+        jfs @end+
+        lod u8t, t0, freecam_relative_velocity_enabled
+        cmp eq, t0, false
+        str u8t, freecam_relative_velocity_enabled, cr
+    @end:
+
+    vpop s0..s4
     exit
 
 #-------------------------------------------------------------------------------
@@ -501,6 +545,7 @@ spawn_smoke:
     fmul t9, PLAYER.THRUSTER_STRENGTH
     fmul t7, t9
     fmul t8, t9
+
     # Position offset vector
     fcos t2, t4
     fsin t3, t4
@@ -957,9 +1002,20 @@ update_velocities:
     # s0..s1: Player x,y velocity
     vpsh s0..s1
 
-    lod f32t, s0, PLAYER.velx
-    lod f32t, s1, PLAYER.vely
-
+    @if_freecam_enabled: # If freecam is enabled, determine whether velocity is relative to the player or global
+        lod u8t, cr, freecam_enabled
+        jfs @else+
+        lod u8t, cr, freecam_relative_velocity_enabled
+        jtr @else+
+        lod f32t, s0, global_velx
+        lod f32t, s1, global_vely
+        fneg s0
+        fneg s1
+        jmp @endif+
+    @else:
+        lod f32t, s0, PLAYER.velx
+        lod f32t, s1, PLAYER.vely
+    @endif:
 
     mov t15, zr
     @loop_bodies:
@@ -998,15 +1054,32 @@ update_velocities:
         jmp @loop-
     @endloop:
 
-    lod f32t, t0, global_velx
-    lod f32t, t1, global_vely
-    fadd t0, s0
-    fadd t1, s1
-    str f32t, global_velx, t0
-    str f32t, global_vely, t1
+    @if_freecam_enabled:
+        lod u8t, cr, freecam_enabled
+        jfs @else+
+        lod u8t, cr, freecam_relative_velocity_enabled
+        jtr @else+
+        lod f32t, t0, PLAYER.velx
+        lod f32t, t1, PLAYER.vely
+        fsub t0, s0
+        fsub t1, s1
+        str f32t, PLAYER.velx, t0
+        str f32t, PLAYER.vely, t1
 
-    str f32t, PLAYER.velx, 0.0
-    str f32t, PLAYER.vely, 0.0
+        str f32t, global_velx, 0.0
+        str f32t, global_vely, 0.0
+        jmp @endif+
+    @else:
+        lod f32t, t0, global_velx
+        lod f32t, t1, global_vely
+        fadd t0, s0
+        fadd t1, s1
+        str f32t, global_velx, t0
+        str f32t, global_vely, t1
+
+        str f32t, PLAYER.velx, 0.0
+        str f32t, PLAYER.vely, 0.0
+    @endif:
 
     vpop s0..s1
     ret
@@ -1128,12 +1201,30 @@ check_input:
 
     str u8t, PLAYER.is_flying, false
     str i8t, control_camera_offset_scalar, 0
+    str f32t, PLAYER.movex, 0.0 # Reset movement
+    str f32t, PLAYER.movey, 0.0
+
+
+    @freecam:
+        lod u8t, cr, freecam_enabled
+        jfs @end+
+        fmul a0, s0, FREECAM_SPEED
+        fmul a1, s1, FREECAM_SPEED
+        lod f32t, t2, dt
+        fmul a0, t2
+        fmul a1, t2
+        lod f32t, t0, freecam_pos_x
+        lod f32t, t1, freecam_pos_y
+        fadd a0, t0
+        fadd a1, t1
+        cal move_camera
+        jmp @end_input+
+    @end:
+
 
     @is_grounded:
         lod u8t, cr, PLAYER.is_grounded
         jfs @else+
-        str f32t, PLAYER.movex, 0.0 # Reset movement
-        str f32t, PLAYER.movey, 0.0
         .is_jump_pressed:
             lod u8t, cr, PLAYER.can_jump # Check if jump is enabled
             and cr, s2
@@ -1181,7 +1272,7 @@ check_input:
         str u8t, PLAYER.can_jump, true
     @end:
 
-
+    @end_input:
 
     vpop s0..s3
     ret
@@ -1358,7 +1449,7 @@ player_match_velocity:
     lod f32t, t0, PLAYER.velx
     lod f32t, t1, PLAYER.vely
 
-    .if_player_grounded: # If player is grounded, halve move speed and cancel jump. Helpful for low-gravity bodies
+    @if_player_grounded: # If player is grounded, halve move speed and cancel jump. Helpful for low-gravity bodies
         lod u8t, cr, PLAYER.is_grounded
         jfs @else+
         lod f32t, t2, PLAYER.movex
@@ -1371,14 +1462,20 @@ player_match_velocity:
         str f32t, PLAYER.jump_charge, PLAYER.MIN_JUMP_CHARGE
         jmp @end+
     @else:
-        # Calculate normal vector
+        lod i8t, t2, PLAYER.parent_body_index # Match velocity to parent body, or global if no parent body exists
+        cmp gt, t2, -1
         lod f32t, a0, global_velx
         lod f32t, a1, global_vely
-        cal normal_vector
-        cmp fgt, a2, 1.0
-        jfs @end+
         fneg a0
         fneg a1
+        cea bodies, t2, BODY.SIZE
+        lde f32t, t0, BODY.VX
+        lde f32t, t1, BODY.VY
+        mvc a0, t0
+        mvc a1, t1
+        cal normal_vector
+        cmp fgt, a2, 0.01
+        jfs @end+
         cal player_move
     @end:
     str u8t, PLAYER.can_jump, false # Don't allow jumping until both keys are released
@@ -1721,7 +1818,6 @@ draw_bodies:
         lde f32t, a2, BODY.R
         lod f32t, t1, distance_scale
         fdiv a2, t1
-        fadd t4, t1, 1.0
         #fdiv t4, 2.0
 
         @is_body_offscreen:
@@ -1732,11 +1828,13 @@ draw_bodies:
             cmp flt, t0, 0.0
             jtr @skipdraw+
             fsub t0, a0, a2
-            cmp fgt, t0, SCREEN_WIDTH_F
-            jtr @skipdraw+
+            cmp flt, t0, SCREEN_WIDTH_F
+            jfs @skipdraw+
             fsub t0, a1, a2
-            cmp fgt, t0, SCREEN_HEIGHT_F
-            jtr @skipdraw+
+            cmp flt, t0, SCREEN_HEIGHT_F
+            jfs @skipdraw+
+
+        fadd t4, t1, 1.0
         fsqrt t4
         lde u16t, t5, BODY.LUM
         fctf t5
@@ -1883,7 +1981,7 @@ sbmk "Draw HUD"
 draw_hud:
     def HUD_PADDING 2
 
-    # Text
+    # Jump Text
     mov a0, HUD_TEXTURE
     mov a1, SCREEN_WIDTH - 108 - HUD_PADDING
     mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
@@ -1893,13 +1991,48 @@ draw_hud:
     mov a7, 0
     syscall SYS_DRAW_TEXTURE_REGION
 
+
+    # B button
     mov a1, HUD_PADDING
     mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
     mov a4, 16
+    mov a5, 24
     syscall SYS_DRAW_TEXTURE_REGION
 
+
+    # B button action text
+    mov a1, 24 + HUD_PADDING
+    mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
+    @if_freecam_enabled:
+        lod u8t, cr, freecam_enabled
+        jfs @else+
+        mov a4, 96
+        lod u8t, cr, freecam_relative_velocity_enabled
+        mvc a4, 112
+        mov a5, 96
+        jmp @endif+
+    @else:
+    @if_grounded:
+        lod u8t, cr, PLAYER.is_grounded
+        jfs @else+
+        mov a3, 24
+        mov a5, 64
+        lod u8t, cr, PLAYER.is_charging
+        mvc a3, 0
+        mvc a4, 144
+        mvc a5, 96
+        jmp @endif+
+    @else:
+        mov a3, 0
+        mov a4, 128
+        mov a5, 80
+    @endif:
+    syscall SYS_DRAW_TEXTURE_REGION
+
+    # Zoom Text
     mov a1, HUD_PADDING
     mov a2, HUD_PADDING
+    mov a3, 0
     mov a4, 32
     mov a5, 104
     mov a6, 32
@@ -1913,7 +2046,19 @@ draw_hud:
         mov a2, SCREEN_HEIGHT/2
         mov a4, 64
         mov a5, 96
-        mov a6, 32
+        mov a6, 16
+        syscall SYS_DRAW_TEXTURE_REGION
+    @endif:
+
+    @if_freecam_enabled:
+        # Freecam Text
+        lod u8t, cr, freecam_enabled
+        jfs @endif+
+        mov a1, SCREEN_WIDTH - 112 - HUD_PADDING
+        mov a2, HUD_PADDING
+        mov a4, 80
+        mov a5, 112
+        mov a6, 16
         syscall SYS_DRAW_TEXTURE_REGION
     @endif:
 
@@ -2170,8 +2315,12 @@ set_distance_scale:
         jmp @loop-
     @endloop:
     str f32t, distance_scale, a0
-    mov a0, false
-    cal center_camera
+    @if_freecam_disabled:
+        lod u8t, cr, freecam_enabled
+        jtr @endif+
+        mov a0, false
+        cal center_camera
+    @endif:
     ret
 
 #-------------------------------------------------------------------------------
