@@ -73,7 +73,7 @@ def GROUNDED_DISTANCE 1.0
 
 def DRAW_BODY_VELOCITIES false # Draw velocity vectors for bodies (relative to the player)
 def DRAW_PLAYER_VELOCITY false # Draw velocity vector for the player (relative to the 'global position')
-def DRAW_ROTATIONAL_VELOCITY true # Add visual indicator to show planet rotation
+def DRAW_ROTATIONAL_VELOCITY false # Add visual indicator to show planet rotation
 def VELOCITY_VISUAL_SCALE 1.0 # How much velocity vectors should be scaled
 def VELOCITY_VECTOR_START_LUMA 10
 def VELOCITY_VECTOR_END_LUMA 255
@@ -109,7 +109,7 @@ PLAYER:
     def .SMOKE_SPAWN_COOLDOWN 0.01 # How often smoke is produced while flying
     # Properties
     ## Physics
-    .x: emb f32t -21000.0 + 10500.0 # X Position
+    .x: emb f32t 0.0 # X Position
     .y: emb f32t 0.0 # Y Position
     .velx: emb f32t 0.0 # X Velocity (km/s)
     .vely: emb f32t -0.001 # Y Velocity (km/s) This is just to make the player face up at start
@@ -254,12 +254,12 @@ _start: # Runs once when the VM starts.
     mov a7, 150 # LUMINOSITY
     cal add_body
 
-    mov a0, 150.0 # X
+    mov a0, -150.0 # X
     mov a1, 0.0 # Y
     mov a2, 0.0 # VELOCITY X
-    mov a3, 975.9 + 44.72 # VELOCITY Y
+    mov a3, 975.9 - 44.72 # VELOCITY Y
     mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 20.0 # RADIUS
+    mov a5, 10.0 # RADIUS
     mov a6, 50000.0 # MASS
     mov a7, 150 # LUMINOSITY
     cal add_body
@@ -2082,7 +2082,8 @@ center_camera:
         lod u8t, cr, PLAYER.is_grounded
         mvc a2, t6
         fctf a2
-        ffma a2, -CAMERA_OFFSET, CAMERA_OFFSET
+        fdiv t3, CAMERA_OFFSET, s0
+        ffma a2, -CAMERA_OFFSET, t3
         ffma t0, a0, a2, t0
         ffma t1, a1, a2, t1
     @endif:
