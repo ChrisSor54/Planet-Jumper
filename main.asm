@@ -16,26 +16,18 @@ bmk "About"
 # I did incorporate some of their optimizations in a small few places, so I'd like to
 # give them a shoutout nonetheless :)
 
-# Controls:
-# BTN_UP / BTN_DOWN / BTN_LEFT / BTN_RIGHT: Movement
-# BTN_A: Jump away from the body you're standing on.
-# BTN_B: Match player velocity relative to the "global" context. If used on a planet, slow your movement speed (useful for low-grav bodies)
-# BTN_X: Zoom the camera in or out
-
 
 #-------------------------------------------------------------------------------
 bmk "DATA"
 
-PLAYER_SPRITESHEET: emb file "assets/astronaut.png" # To be implemented
-def PLAYER_SPRITE_WIDTH 8
-def PLAYER_SPRITE_WIDTH_F 8.0
-BACKGROUND_TEXTURE: emb file "assets/background_simple.png"
-def BG_TEX_WIDTH 320
-def BG_TEX_HEIGHT 240
-def BG_TEX_WIDTH_F 320.0
-def BG_TEX_HEIGHT_F 240.0
-HUD_TEXTURE: emb file "assets/hud_compact.png"
+PLAYER_SPRITESHEET: emb file "assets/astronaut.png"
+SCREENS_TEXTURES: emb file "assets/screens.png"
+HUD_SPRITESHEET: emb file "assets/hud_compact.png"
+FONT_SPRITESHEET: emb file "assets/font.png"
 
+
+system_id: emb u8t 0 # The ID of the current planetary system
+system_count: emb u8t 0
 
 #-------------------------------------------------------------------------------
 bmk "CONSTANTS"
@@ -46,10 +38,20 @@ def G 1.0 # This makes gravity a lot stronger but more fun :)
 def MAX_BODIES 20
 def BODY_ELASTICITY 0.8
 
-def SCREEN_WIDTH_F 320.0
-def SCREEN_HEIGHT_F 240.0
+def SCREEN_WIDTH_F fcast SCREEN_WIDTH
+def SCREEN_HEIGHT_F fcast SCREEN_HEIGHT
 def CENTER_X_F SCREEN_WIDTH_F/2.0
 def CENTER_Y_F SCREEN_HEIGHT_F/2.0
+
+def PLAYER_SPRITE_WIDTH 8
+def PLAYER_SPRITE_WIDTH_F 8.0
+
+def SCREENS_TEXTURE_WIDTH 640
+
+def BG_TEX_WIDTH 320
+def BG_TEX_HEIGHT 240
+def BG_TEX_WIDTH_F 320.0
+def BG_TEX_HEIGHT_F 240.0
 
 def GROUNDED_PLAYER_COLLISION_MARGIN 2.0
     # How far a grounded player must be before no longer being considered grounded
@@ -87,7 +89,7 @@ def BG_SCROLL_SCALE 0.1 # How much the background moves relative to the foregrou
 #-------------------------------------------------------------------------------
 sbmk "Input Bindings"
 
-Input:
+INPUT:
     def .JUMP BTN_A
     def .MATCH_VELOCITY BTN_B
     def .ZOOM_IN BTN_X
@@ -102,6 +104,7 @@ bmk "STRUCTS"
 sbmk "Player"
 
 PLAYER:
+    def .PLAYER_DATA $
     # Constants
     def .MOVE_SPEED 100.0
     def .THRUSTER_STRENGTH 100.0
@@ -110,11 +113,10 @@ PLAYER:
     def .JUMP_CHARGE_SPEED (.MAX_JUMP_CHARGE-.MIN_JUMP_CHARGE)/0.8
     def .SMOKE_SPAWN_COOLDOWN 0.01 # How often smoke is produced while flying
     # Properties
-    ## Physics
     .x: emb f32t 0.0 # X Position
     .y: emb f32t 0.0 # Y Position
     .velx: emb f32t 0.0 # X Velocity (km/s)
-    .vely: emb f32t -0.001 # Y Velocity (km/s) This is just to make the player face up at start
+    .vely: emb f32t 0.0 # Y Velocity (km/s) This is just to make the player face up at start
     .movex: emb f32t 0.0 # X Move Velocity
     .movey: emb f32t 0.0 # Y Move Velocity
     .rot: emb f32t 0.0 # Rotation (Radians)
@@ -125,11 +127,14 @@ PLAYER:
     .is_flying: emb u8t false # Player is moving in the air
     .is_charging: emb u8t false # Player is charging a jump
     .can_jump: emb u8t true
+    .is_alive: emb u8t true
+
     .jump_charge: emb f32t PLAYER.MIN_JUMP_CHARGE
     .smoke_cooldown_timer: emb f32t 0.0
-
     .parent_body_index: emb i8t -1 # -1 means no parent body has been found (only really applicable if no bodies exist)
     .flip_sprite: emb u8t false
+
+    def .SIZE ($ - PLAYER)
 
 #-------------------------------------------------------------------------------
 sbmk "Body"
@@ -144,7 +149,7 @@ BODY:
     .rot_av: emb f32t 0.0 # Rotational Angular Velocity (rad/s)
     .radius: emb f32t 1.0 # Radius (km)
     .mass: emb f32t 1.0 # Mass (kg)
-    .luminosity: emb u16t 150   # Visual brightness. Although luma are constrained from 0-255,
+    .luminosity: emb u16t 150   # Visual brightness. Although luma are constrained within 1-255,
                                 # objects are darker at higher distance scales, so a higher
                                 # luminosity will maintain brightness at greater distances
     # Offsets
@@ -185,49 +190,69 @@ SMOKE:
     def .LIFESPAN (.lifespan - SMOKE)
     def .SIZE ($ - SMOKE)
 
-
 #-------------------------------------------------------------------------------
-sbmk "Misc."
+bmk "ARRAYS"
 
-
-Commands:
-    .ZOOM_IN: emb string "ZOOM_IN"
-    .ZOOM_OUT: emb string "ZOOM_OUT"
-
-Strings:
-    .jump_charge: emb string "Jump Charge: "
-    .zoom: emb string "Set Distance Scale to: "
+def SYSTEM_SIZE BODY.SIZE*MAX_BODIES
+system_bodies: res u8t SYSTEM_SIZE
+system_bodies_count: emb u8t 0
+smoke: res u8t SMOKE.SIZE*SMOKE.MAX_SMOKE_COUNT
+buffer: res u8t MAX_TERMINAL_INPUT_SIZE
 
 #-------------------------------------------------------------------------------
 bmk "VARIABLES"
+SCREENS:
+    def .TITLE_SCREEN 0
+    def .MAIN_MENU 1
+    def .GAME_SCREEN 2
+
+current_screen: emb u8t SCREENS.TITLE_SCREEN # Which screen the player is currently in
 
 distance_scale: emb f32t 1.0 # Camera Zoom
 dt: emb f32t 0.0 # DeltaTime
+
 bg_offset_x: emb f32t 0.0
 bg_offset_y: emb f32t 0.0
-# Velocities are updated to be relative to the player
 global_velx: emb f32t 0.0
 global_vely: emb f32t 0.0
 freecam_pos_x: emb f32t 0.0
 freecam_pos_y: emb f32t 0.0
-
 control_camera_offset_scalar: emb i8t 0 # -1, 1, or 1, used for controlling the camera with up and down
 
-# Arrays
-
-buffer: res u8t MAX_TERMINAL_INPUT_SIZE
-
-bodies: res u8t BODY.SIZE*MAX_BODIES
-bodies_count: emb u8t 0
-
-smoke: res u8t SMOKE.SIZE*SMOKE.MAX_SMOKE_COUNT
-
 # Flags
-system_paused: emb u8t false # Used for pausing the game
+game_paused: emb u8t false # Used for pausing the game
 smoke_can_spawn: emb u8t false
 freecam_enabled: emb u8t false
 freecam_relative_velocity_enabled: emb u8t true
 #zoom_toggled: emb u8t true
+
+#-------------------------------------------------------------------------------
+bmk "STRINGS"
+
+STRINGS:
+    .DATA_HEADER: emb string "SYS#"
+
+    # Menus
+    .START: emb string "PRESS START"
+
+    # Game HUD
+    .JUMP: emb string ":JUMP"
+    .WALK: emb string ":WALK"
+    .CANCEL: emb string ":CANCEL"
+    .MATCH: emb string ":MATCH"
+    .PLAYER: emb string ":PLAYER"
+    .GLOBAL: emb string ":GLOBAL"
+    .ZOOM_IN: emb string ":ZOOM+"
+    .ZOOM_OUT: emb string ":ZOOM-"
+    .FREECAM: emb string "FREECAM"
+    .PAUSE: emb string "GAME PAUSED"
+
+    # Errors
+    .ERR_INVALID_SYSTEM_ID: emb string "ERROR: INVALID SYSTEM ID"
+
+Commands:
+    .ZOOM_IN: emb string "ZOOM_IN"
+    .ZOOM_OUT: emb string "ZOOM_OUT"
 
 #-------------------------------------------------------------------------------
 bmk "-------------------------"
@@ -240,45 +265,51 @@ sbmk "Start"
 _start: # Runs once when the VM starts.
     # Initialize your game state here.
 
-    mov a0, -34000.0 # X
-    mov a1, 0.0 # Y
-    mov a2, 0.0 # VELOCITY X
-    mov a3, 0.0 # VELOCITY Y
-    mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 5000.0 # RADIUS
-    mov a6, 20000000000.0 # MASS
-    mov a7, 50000 # LUMINOSITY
-    cal add_body
+    #mov a0, -34000.0 # X
+    #mov a1, 0.0 # Y
+    #mov a2, 0.0 # VELOCITY X
+    #mov a3, 0.0 # VELOCITY Y
+    #mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
+    #mov a5, 5000.0 # RADIUS
+    #mov a6, 20000000000.0 # MASS
+    #mov a7, 50000 # LUMINOSITY
+    #cal add_body
 
-    mov a0, 0.0 # X
-    mov a1, 0.0 # Y
-    mov a2, 0.0 # VELOCITY X
-    mov a3, 766.96 # VELOCITY Y
-    mov a4, 2*PI/600 # ROTATIONAL ANGLUAR VELOCITY
-    mov a5, 250.0 # RADIUS
-    mov a6, 8000000.0 # MASS
-    mov a7, 200 # LUMINOSITY
-    cal add_body
+    #mov a0, 0.0 # X
+    #mov a1, 0.0 # Y
+    #mov a2, 0.0 # VELOCITY X
+    #mov a3, 766.96 # VELOCITY Y
+    #mov a4, 2*PI/600 # ROTATIONAL ANGLUAR VELOCITY
+    #mov a5, 250.0 # RADIUS
+    #mov a6, 8000000.0 # MASS
+    #mov a7, 200 # LUMINOSITY
+    #cal add_body
 
-    mov a0, -350.0 # X
-    mov a1, 0.0 # Y
-    mov a2, 0.0 # VELOCITY X
-    mov a3, 766.96 - 151.19 # VELOCITY Y
-    mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 10.0 # RADIUS
-    mov a6, 50000.0 # MASS
-    mov a7, 150 # LUMINOSITY
-    cal add_body
+    #mov a0, -350.0 # X
+    #mov a1, 0.0 # Y
+    #mov a2, 0.0 # VELOCITY X
+    #mov a3, 766.96 - 151.19 # VELOCITY Y
+    #mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
+    #mov a5, 10.0 # RADIUS
+    #mov a6, 50000.0 # MASS
+    #mov a7, 150 # LUMINOSITY
+    #cal add_body
 
-    mov a0, -5000.0 # X
-    mov a1, 0.0 # Y
-    mov a2, 0.0 # VELOCITY X
-    mov a3, 830.45 # VELOCITY Y
-    mov a4, PI/10 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 100.0 # RADIUS
-    mov a6, 6500000.0 # MASS --- This one is tricky to take off from, but it's possible!
-    mov a7, 200 # LUMINOSITY
-    cal add_body
+    #mov a0, -5000.0 # X
+    #mov a1, 0.0 # Y
+    #mov a2, 0.0 # VELOCITY X
+    #mov a3, 830.45 # VELOCITY Y
+    #mov a4, PI/10 # ROTATIONAL ANGULAR VELOCITY
+    #mov a5, 100.0 # RADIUS
+    #mov a6, 6500000.0 # MASS --- This one is tricky to take off from, but it's possible!
+    #mov a7, 200 # LUMINOSITY
+    #cal add_body
+
+    mov a0, 0
+    cal load_system
+
+    mov a0, 1
+    cal save_system
 
     mov a0, false
     cal center_camera
@@ -289,20 +320,196 @@ _start: # Runs once when the VM starts.
 sbmk "Update"
 _update: # Runs at 60 Hz.
     # Write your game logic here.
+
+
+    lod u8t, t0, current_screen
+
+    @title_screen:
+        cmp eq, t0, SCREENS.TITLE_SCREEN
+        jfs @else+
+        cal title_screen_update
+        jmp @exit_update+
+    @else:
+    @main_menu:
+        cmp eq, t0, SCREENS.MAIN_MENU
+        jfs @else+
+        cal main_menu_update
+        jmp @exit_update+
+    @else:
+    @game_screen:
+        cmp eq, t0, SCREENS.GAME_SCREEN
+        jfs @else+
+        cal game_screen_update
+        jmp @exit_update+
+    @else:
+    @exit_update:
+
+    #lod u8t, a0, PLAYER.is_grounded
+    #syscall SYS_PRINT_LINE_INT
+
+    exit
+
+#-------------------------------------------------------------------------------
+sbmk "Draw"
+_draw: # Runs at 60 Hz and updates the front buffer.
+    # Draw graphics to the screen here.
+
+    lod u8t, t0, current_screen
+
+    @title_screen:
+        cmp eq, t0, SCREENS.TITLE_SCREEN
+        jfs @else+
+        cal title_screen_draw
+        jmp @exit_draw+
+    @else:
+    @main_menu:
+        cmp eq, t0, SCREENS.MAIN_MENU
+        jfs @else+
+        cal main_menu_draw
+        jmp @exit_draw+
+    @else:
+    @game_screen:
+        cmp eq, t0, SCREENS.GAME_SCREEN
+        jfs @else+
+        cal game_screen_draw
+        jmp @exit_draw+
+    @else:
+
+    @exit_draw:
+
+    exit
+
+#-------------------------------------------------------------------------------
+sbmk "Input"
+_input: # Runs when input state changes.
+    # React to player input here.
+    lod u8t, t0, current_screen
+
+    @title_screen:
+        cmp eq, t0, SCREENS.TITLE_SCREEN
+        jfs @else+
+        cal title_screen_input
+        jmp @exit_input+
+    @else:
+    @main_menu:
+        cmp eq, t0, SCREENS.MAIN_MENU
+        jfs @else+
+        cal main_menu_input
+        jmp @exit_input+
+    @else:
+    @game_screen:
+        cmp eq, t0, SCREENS.GAME_SCREEN
+        jfs @else+
+        cal game_screen_input
+        jmp @exit_input+
+    @else:
+
+    @exit_input:
+    exit
+
+#-------------------------------------------------------------------------------
+sbmk "Terminal Input"
+_terminal_input:
+    # Reads the terminal input string into memory.
+    mov a0, buffer
+    mov a1, MAX_TERMINAL_INPUT_SIZE
+    syscall SYS_READ_TERMINAL_INPUT
+    cal check_commands
+    exit
+
+#-------------------------------------------------------------------------------
+bmk "-------------------------"
+
+#-------------------------------------------------------------------------------
+bmk "SCREENS"
+
+#-------------------------------------------------------------------------------
+bmk "Title Screen"
+
+#-------------------------------------------------------------------------------
+sbmk "Title Screen Update"
+title_screen_update:
+
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Title Screen Input"
+title_screen_input:
+    syscall SYS_GET_INPUT
+
+    and t0, a0, BTN_START
+    and t1, a0, BTN_A
+    cmp neq, t0, 0
+    mov t0, cr
+    cmp neq, t1, 0
+    orr cr, t0
+
+    @if_start:
+        jfs @endif+
+        str u8t, current_screen, SCREENS.GAME_SCREEN
+
+    @endif:
+
+
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Title Screen Draw"
+title_screen_draw:
+    str f32t, bg_offset_x, 0.0
+    str f32t, bg_offset_y, 0.0
+    cal draw_background
+
+    mov a0, STRINGS.START
+    mov a1, SCREEN_WIDTH/2 - 87
+    mov a2, SCREEN_HEIGHT * 3/4
+    cal draw_string
+    ret
+
+#-------------------------------------------------------------------------------
+bmk "Main Menu"
+
+#-------------------------------------------------------------------------------
+sbmk "Main Menu Update"
+main_menu_update:
+
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Main Menu Input"
+main_menu_input:
+
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Main Menu Draw"
+main_menu_draw:
+
+    ret
+
+#-------------------------------------------------------------------------------
+bmk "Game Screen"
+
+#-------------------------------------------------------------------------------
+sbmk "Game Screen Update"
+game_screen_update:
+
+    psh s0
     syscall SYS_GET_UPDATE_DELTA
     str f32t, dt, a0
 
     cmp flt, a0, 1.0 # Skip this update if the framerate is too low to avoid physics issues
-    jfs @pause_end+
-    lod u8t, cr, system_paused
-    jtr @pause_end+
+    jfs @end_update+
 
     str u8t, smoke_can_spawn, false
 
-    psh s0
+    lod u8t, cr, game_paused
+    jtr @end_update+
+
+
     mov s0, zr
     cal update_gravity
-    cal check_input
+    cal check_player_input
     cal update_velocities
     cal update_positions
     cal update_collisions
@@ -324,42 +531,27 @@ _update: # Runs at 60 Hz.
         jtr @endif+
         mov a0, true
         cal center_camera
-        pop s0
     @endif:
 
-    @pause_end:
-
-    #lod u8t, a0, PLAYER.is_grounded
-    #syscall SYS_PRINT_LINE_INT
-
-    exit
+    @end_update:
+    pop s0
+    ret
 
 #-------------------------------------------------------------------------------
-sbmk "Draw"
-_draw: # Runs at 60 Hz and updates the front buffer.
-    # Draw graphics to the screen here.
-    cal draw_background
-    cal draw_smoke
-    cal draw_bodies
-    cal draw_player
-    cal draw_hud
-    exit
+sbmk "Game Screen Input"
 
-#-------------------------------------------------------------------------------
-sbmk "Input"
-_input: # Runs when input state changes.
-    # React to player input here.
-
+game_screen_input:
     vpsh s0..s4
+
     syscall SYS_GET_INPUT
 
     # Zoom in
-    and t0, a0, Input.ZOOM_IN
+    and t0, a0, INPUT.ZOOM_IN
     cmp neq, t0, 0
     mov s0, cr
 
     # Zoom out
-    and t0, a0, Input.ZOOM_OUT
+    and t0, a0, INPUT.ZOOM_OUT
     cmp neq, t0, 0
     mov s1, cr
 
@@ -367,17 +559,17 @@ _input: # Runs when input state changes.
     fctf s0, t0
 
     # Pause
-    and t0, a0, Input.PAUSE
+    and t0, a0, INPUT.PAUSE
     cmp neq, t0, 0
     mov s2, cr
 
     # freecam
-    and t0, a0, Input.FREE_CAM
+    and t0, a0, INPUT.FREE_CAM
     cmp neq, t0, 0
     mov s3, cr
 
     # Toggle velocity relativity
-    and t0, a0, Input.MATCH_VELOCITY
+    and t0, a0, INPUT.MATCH_VELOCITY
     cmp neq, t0, 0
     mov s4, cr
 
@@ -396,19 +588,14 @@ _input: # Runs when input state changes.
         cmp eq, t1, a0 # Don't call if nothing changed
         jtr @end+
         cal set_distance_scale
-        mov a0, Strings.zoom
-        mov a1, 1
-        syscall SYS_PRINT_STRING
-        lod f32t, a0, distance_scale
-        syscall SYS_PRINT_LINE_FLOAT
     @end:
 
     @toggle_pause:
         mov cr, s2
         jfs @end+
-        lod u8t, t0, system_paused
+        lod u8t, t0, game_paused
         cmp eq, t0, false
-        str u8t, system_paused, cr
+        str u8t, game_paused, cr
     @end:
 
     @toggle_freecam:
@@ -433,19 +620,22 @@ _input: # Runs when input state changes.
         cmp eq, t0, false
         str u8t, freecam_relative_velocity_enabled, cr
     @end:
-
     vpop s0..s4
-    exit
+    ret
 
 #-------------------------------------------------------------------------------
-sbmk "Terminal Input"
-_terminal_input:
-    # Reads the terminal input string into memory.
-    mov a0, buffer
-    mov a1, MAX_TERMINAL_INPUT_SIZE
-    syscall SYS_READ_TERMINAL_INPUT
-    cal check_commands
-    exit
+sbmk "Game Screen Draw"
+
+game_screen_draw:
+
+    cal draw_background
+    cal draw_smoke
+    cal draw_bodies
+    cal draw_player
+    cal draw_hud
+
+    ret
+
 
 #-------------------------------------------------------------------------------
 bmk "-------------------------"
@@ -453,12 +643,136 @@ bmk "-------------------------"
 #-------------------------------------------------------------------------------
 bmk "FUNCTIONS"
 
+#-------------------------------------------------------------------------------
+bmk "Data Management"
+
+def SYSTEM_DATA_SIZE PLAYER.SIZE + SYSTEM_SIZE + 7 # Additional bytes to hold the system id and body count
+
+#-------------------------------------------------------------------------------
+sbmk "Save System Data"
+save_system:
+    # Saves system data to storage
+    # > a0: System ID
+
+    psh s0
+    mov s0, a0
+
+    @valid_id_check:
+        cmp gte, s0, 0
+        mov t0, cr
+        cmp lte, s0, 255
+        and cr, t0
+        jtr @end_check+
+        mov a0, STRINGS.ERR_INVALID_SYSTEM_ID
+        syscall SYS_PRINT_LINE_STRING
+        jmp @end+
+    @end_check:
+
+    # Save system ID
+    mul a0, s0, SYSTEM_DATA_SIZE
+    mov a1, STRINGS.DATA_HEADER
+    mov a2, 4
+    syscall SYS_STORAGE_WRITE
+
+    add t0, s0, 48 # Save the id as ASCII ( at least until 9) to make it clearer to view data in hex editor
+    str u8t, system_id, t0
+
+    add a0, 4
+    mov a1, system_id
+    mov a2, 1
+    syscall SYS_STORAGE_WRITE
+
+    str u8t, system_id, s0
+
+
+    # Save system ID
+    add a0, 1
+    mov a1, system_id
+    mov a2, 1
+    syscall SYS_STORAGE_WRITE
+
+    # Save Player data
+    add a0, 1
+    mov a1, PLAYER
+    mov a2, PLAYER.SIZE
+    syscall SYS_STORAGE_WRITE
+
+    # Save body data
+    add a0, PLAYER.SIZE
+    mov a1, system_bodies_count
+    mov a2, 1
+    syscall SYS_STORAGE_WRITE
+
+    add a0, 1
+    mov a1, system_bodies
+    mov a2, SYSTEM_SIZE
+    syscall SYS_STORAGE_WRITE
+
+    @end:
+    mov a0, s0
+    pop s0
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Load System Data"
+load_system:
+    # Loads system data from storage
+    # > a0: System ID
+
+    psh s0
+    mov s0, a0
+
+    @valid_id_check:
+        cmp gte, s0, 0
+        mov t0, cr
+        cmp lte, s0, 255
+        and cr, t0
+        jtr @end_check+
+        mov a0, STRINGS.ERR_INVALID_SYSTEM_ID
+        syscall SYS_PRINT_LINE_STRING
+        jmp @end+
+    @end_check:
+
+    # Load system ID
+    mov a0, system_id
+    fma a1, s0, SYSTEM_DATA_SIZE, 5
+    mov a2, 1
+    syscall SYS_STORAGE_READ
+
+    # Load Player data
+    mov a0, PLAYER
+    add a1, 1
+    mov a2, PLAYER.SIZE
+    syscall SYS_STORAGE_READ
+
+    # Load body data
+    mov a0, system_bodies_count
+    add a1, PLAYER.SIZE
+    mov a2, 1
+    syscall SYS_STORAGE_READ
+
+    mov a0, system_bodies
+    add a1, 1
+    mov a2, SYSTEM_SIZE
+    syscall SYS_STORAGE_READ
+
+    @end:
+    pop s0
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Reset"
+reset:
+    # Reset values to default
+
+
+    ret
 
 #-------------------------------------------------------------------------------
 bmk "Spawning"
 
 #-------------------------------------------------------------------------------
-sbmk "Spawn Body"
+sbmk "Add Body"
 add_body:
     # > (f32t) a0..a1: x, y position (from center of screen)
     # > (f32t) a2..a3: x, y velocity
@@ -489,11 +803,11 @@ add_body:
     #       (NOTE: This is only useful for ensuring a star will not disturb a moon's orbit.
     #               Other planets can still disrupt the orbit if close enough!)
 
-    lod u8t, t0, bodies_count
+    lod u8t, t0, system_bodies_count
     cmp lt, t0, MAX_BODIES
     jfs @end+
 
-    cea bodies, t0, BODY.SIZE
+    cea system_bodies, t0, BODY.SIZE
     lod f32t, t1, PLAYER.x
     lod f32t, t2, PLAYER.y
     fsub t4, t1, a0 # Avoid objects being in the same coordinate to avoid issues
@@ -518,7 +832,7 @@ add_body:
     ste u16t, BODY.LUM, a7 # Set luminosity
 
     inc t0
-    str u8t, bodies_count, t0
+    str u8t, system_bodies_count, t0
     @end:
     ret
 
@@ -579,26 +893,26 @@ update_gravity:
     mov s3, zr # Strongest gravitational influence on player
     mov s0, zr
     @loop_bodies:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, s0, t0
         jfs @endloop_bodies+
         mov s1, zr
 
         # Other Bodies
         @loop2:
-            lod u8t, t0, bodies_count
+            lod u8t, t0, system_bodies_count
             cmp lt, s1, t0
             jfs @endloop2+
             cmp eq, s1, s0
             jtr @skip+
 
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             lde f32t, a0, BODY.X
             lde f32t, a1, BODY.Y
             lde f32t, a2, BODY.VX
             lde f32t, a3, BODY.VY
             lde f32t, a4, BODY.M
-            cea bodies, s1, BODY.SIZE
+            cea system_bodies, s1, BODY.SIZE
             lde f32t, a5, BODY.X
             lde f32t, a6, BODY.Y
             lde f32t, a7, BODY.M
@@ -619,7 +933,7 @@ update_gravity:
             fadd a2, a0 # Apply acceleration
             fadd a3, a1
 
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             ste f32t, BODY.VX, a2
             ste f32t, BODY.VY, a3
 
@@ -636,7 +950,7 @@ update_gravity:
         lod f32t, a3, PLAYER.vely
         lod f32t, a4, PLAYER.mass
 
-        cea bodies, s0, BODY.SIZE
+        cea system_bodies, s0, BODY.SIZE
         lde f32t, a5, BODY.X
         lde f32t, a6, BODY.Y
         lde f32t, a7, BODY.M
@@ -693,11 +1007,11 @@ update_positions:
 
     mov s0, zr
     @loop_bodies:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, s0, t0
         jfs @endloop_bodies+
 
-        cea bodies, s0, BODY.SIZE
+        cea system_bodies, s0, BODY.SIZE
         lde f32t, t0, BODY.X
         lde f32t, t1, BODY.Y
         lde f32t, t2, BODY.VX
@@ -779,7 +1093,7 @@ update_positions:
         lod i8t, t2, PLAYER.parent_body_index
         cmp lt, t2, 0
         jtr @else+
-        cea bodies, t2, BODY.SIZE
+        cea system_bodies, t2, BODY.SIZE
         lde f32t, t2, BODY.X
         lde f32t, t3, BODY.Y
 
@@ -858,12 +1172,12 @@ update_collisions:
 
     mov s0, zr
     @loop_bodies:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, s0, t0
         jfs @endloop_bodies+
         mov s1, zr
         @loop2:
-            lod u8t, t0, bodies_count
+            lod u8t, t0, system_bodies_count
             cmp lt, s1, t0
             jfs @endloop2+
             cmp eq, s1, s0
@@ -872,13 +1186,13 @@ update_collisions:
             mov a1, s1
             cal check_collision
             jfs @skip+
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             lde f32t, t0, BODY.X
             lde f32t, t1, BODY.Y
             lde f32t, t2, BODY.VX
             lde f32t, t3, BODY.VY
             lde f32t, t4, BODY.M
-            cea bodies, s1, BODY.SIZE
+            cea system_bodies, s1, BODY.SIZE
             lde f32t, t5, BODY.X
             lde f32t, t6, BODY.Y
             lde f32t, t7, BODY.VX
@@ -913,7 +1227,7 @@ update_collisions:
     # Player collisions
     mov s0, zr
     @loop:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, s0, t0
         jfs @endloop+
         @if_player_colliding:
@@ -922,7 +1236,7 @@ update_collisions:
             jfs @endif+
             lod f32t, t0, PLAYER.x
             lod f32t, t1, PLAYER.y
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             lde f32t, t2, BODY.X
             lde f32t, t3, BODY.Y
             lde f32t, t4, BODY.R
@@ -1019,11 +1333,11 @@ update_velocities:
 
     mov t15, zr
     @loop_bodies:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, t15, t0
         jfs @endloop_bodies+
 
-        cea bodies, t15, BODY.SIZE
+        cea system_bodies, t15, BODY.SIZE
         lde f32t, t0, BODY.VX
         lde f32t, t1, BODY.VY
 
@@ -1163,8 +1477,8 @@ update_smoke:
 bmk "Input"
 
 #-------------------------------------------------------------------------------
-sbmk "Check Input"
-check_input:
+sbmk "Check Player Input"
+check_player_input:
     # Get input states
     # s0: Left - Right
     # s1: Up - Down
@@ -1191,11 +1505,11 @@ check_input:
     fadd s0, t0, t1
     fadd s1, t2, t3
 
-    and t0, a0, Input.JUMP
+    and t0, a0, INPUT.JUMP
     cmp neq, t0, 0
     mov s2, cr
 
-    and t0, a0, Input.MATCH_VELOCITY
+    and t0, a0, INPUT.MATCH_VELOCITY
     cmp neq, t0, 0
     mov s3, cr
 
@@ -1293,7 +1607,7 @@ player_move:
         lod i8t, t0, PLAYER.parent_body_index
         cmp lt, t0, 0
         jtr @else+
-        cea bodies, t0, BODY.SIZE
+        cea system_bodies, t0, BODY.SIZE
         lod f32t, t0, PLAYER.x
         lod f32t, t1, PLAYER.y
         lod f32t, t2, PLAYER.velx
@@ -1383,7 +1697,7 @@ player_jump:
     lod i8t, t0, PLAYER.parent_body_index
     cmp lt, t0, 0
     jtr @end+
-    cea bodies, t0, BODY.SIZE
+    cea system_bodies, t0, BODY.SIZE
     lod f32t, t0, PLAYER.x
     lod f32t, t1, PLAYER.y
     lod f32t, t2, PLAYER.velx
@@ -1468,7 +1782,7 @@ player_match_velocity:
         lod f32t, a1, global_vely
         fneg a0
         fneg a1
-        cea bodies, t2, BODY.SIZE
+        cea system_bodies, t2, BODY.SIZE
         lde f32t, t0, BODY.VX
         lde f32t, t1, BODY.VY
         mvc a0, t0
@@ -1489,14 +1803,14 @@ sbmk "Check Collision"
 check_collision:
     # > a0: body1 index
     # > a1: body2 index
-    cea bodies, a0, BODY.SIZE
+    cea system_bodies, a0, BODY.SIZE
     lde f32t, t0, BODY.X
     lde f32t, t1, BODY.Y
     lde f32t, t2, BODY.VX
     lde f32t, t3, BODY.VY
     lde f32t, t4, BODY.R
 
-    cea bodies, a1, BODY.SIZE
+    cea system_bodies, a1, BODY.SIZE
     lde f32t, t5, BODY.X
     lde f32t, t6, BODY.Y
     lde f32t, t7, BODY.VX
@@ -1544,7 +1858,7 @@ check_collision:
 sbmk "Check Player Collision"
 check_player_collision:
     # > a0: body index
-    cea bodies, a0, BODY.SIZE
+    cea system_bodies, a0, BODY.SIZE
     lde f32t, t0, BODY.X
     lde f32t, t1, BODY.Y
     lde f32t, t2, BODY.VX
@@ -1688,7 +2002,7 @@ apply_impulse:
     # > a0..a1: impulse vector
     # > a2: body index
 
-    cea bodies, a2, BODY.SIZE
+    cea system_bodies, a2, BODY.SIZE
     lde f32t, t0, BODY.VX
     lde f32t, t1, BODY.VY
     lde f32t, t2, BODY.M
@@ -1712,6 +2026,9 @@ draw_player:
     # s0: Which version of the player sprite (based on zoom)
     psh s0
 
+    lod u8t, cr, PLAYER.is_alive
+    jfs @end+
+
     lod f32t, t0, distance_scale
     fsub s0, t0, 1.0
     fdiv s0, 2.0
@@ -1730,15 +2047,15 @@ draw_player:
         # Draw player as a dot
         .is_offscreen:
             cmp lt, t0, 0
-            jtr @end+
+            jtr @endif+
             cmp lt, t1, 0
-            jtr @end+
+            jtr @endif+
             cmp lt, t0, SCREEN_WIDTH
-            jfs @end+
+            jfs @endif+
             cmp lt, t1, SCREEN_HEIGHT
-            jfs @end+
+            jfs @endif+
             sbpx t0, t1, 255
-        jmp @end+
+        jmp @endif+
     @else:
 
         mov a0, PLAYER_SPRITESHEET
@@ -1775,11 +2092,11 @@ draw_player:
         mov a7, 0
         #lod u8t, a7, PLAYER.flip_sprite
         syscall SYS_DRAW_TEXTURE_REGION
-        jmp @end+
+        jmp @endif+
 
-    @end:
+    @endif:
 
-    .if_show_vectors:
+    @if_show_vectors:
         mov cr, DRAW_PLAYER_VELOCITY
         jfs @endif+
         lod f32t, t0, PLAYER.x
@@ -1794,6 +2111,8 @@ draw_player:
         mov a5, VELOCITY_VECTOR_END_LUMA
         cal draw_gradient_line
     @endif:
+
+    @end:
     pop s0
     ret
 
@@ -1805,12 +2124,12 @@ draw_bodies:
 
     mov s0, zr
     @loop:
-        lod u8t, t0, bodies_count
+        lod u8t, t0, system_bodies_count
         cmp lt, s0, t0
         jfs @endloop+
 
 
-        cea bodies, s0, BODY.SIZE
+        cea system_bodies, s0, BODY.SIZE
         lde f32t, t0, BODY.X
         lde f32t, t1, BODY.Y
         fadd a0, t0, CENTER_X_F
@@ -1845,13 +2164,13 @@ draw_bodies:
         cal DrawPAcircle
         vpop a0..a3
 
-        @if_show_rotation: # Draw lines on bodies to visualize rotation
+        @if_show_rotation: # Draw lines on system_bodies to visualize rotation
             mov cr, DRAW_ROTATIONAL_VELOCITY
             jfs @endif+
             mov s1, a0
             mov s2, a1
             mov s3, a2
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             lde f32t, s4, BODY.ROT
             fadd s5, s4, 2*PI
             mov a4, 1
@@ -1877,7 +2196,7 @@ draw_bodies:
         @if_show_vectors:
             mov cr, DRAW_BODY_VELOCITIES
             jfs @endif+
-            cea bodies, s0, BODY.SIZE
+            cea system_bodies, s0, BODY.SIZE
             lde f32t, t0, BODY.X
             lde f32t, t1, BODY.Y
             fadd a0, t0, CENTER_X_F
@@ -1911,24 +2230,35 @@ draw_background:
     fcti t0
     fcti t1
 
-    mov a0, BACKGROUND_TEXTURE
+    lod u8t, t2, current_screen
+    mod t3, t2, SCREENS_TEXTURE_WIDTH/SCREEN_WIDTH
+    div t4, t2, SCREENS_TEXTURE_WIDTH/SCREEN_WIDTH
+
+    mul t3, SCREEN_WIDTH # Left
+    mul t4, SCREEN_HEIGHT # Top
+
+    add t5, t3, SCREEN_WIDTH # Right
+    add t6, t4, SCREEN_HEIGHT # Bottom
+
+    mov a0, SCREENS_TEXTURES
     vmov a1..a2, 0
-    vmov a3..a4, t0..
-    sub a5, BG_TEX_WIDTH, t0
-    sub a6, BG_TEX_HEIGHT, t1
+    add a3, t3, t0
+    add a4, t4, t1
+    sub a5, t5, t0
+    sub a6, t6, t1
     mov a7, 0
     syscall SYS_DRAW_TEXTURE_REGION
-    sub a1, BG_TEX_WIDTH, t0
-    mov a3, 0
-    mov a5, t0
+    sub a1, SCREEN_WIDTH, t0
+    mov a3, t3
+    add a5, t5, t0
     syscall SYS_DRAW_TEXTURE_REGION
-    sub a2, BG_TEX_HEIGHT, t1
-    mov a4, 0
-    mov a6, t1
+    sub a2, SCREEN_HEIGHT, t1
+    mov a4, t4
+    add a6, t6, t1
     syscall SYS_DRAW_TEXTURE_REGION
     mov a1, 0
-    mov a3, t0
-    sub a5, BG_TEX_WIDTH, t0
+    add a3, t3, t0
+    sub a5, t5, t0
     syscall SYS_DRAW_TEXTURE_REGION
     ret
 
@@ -1979,166 +2309,204 @@ draw_smoke:
 #-------------------------------------------------------------------------------
 sbmk "Draw HUD"
 draw_hud:
+    # Flags: -- Set to 0 to not display
+    #   s0: Jump bar
+    #   s1: 1: Walk, 2: Cancel, 3: Match, 4: Player, 5: Global
+    #   s2: Zoom
+    #   s3: Freecam
+
+    vpsh s0..s5
+
     def HUD_PADDING 2
+    def LEFT_EDGE HUD_PADDING
+    def RIGHT_EDGE SCREEN_WIDTH - HUD_PADDING
+    def TOP_EDGE HUD_PADDING
+    def BOTTOM_EDGE SCREEN_HEIGHT - HUD_PADDING
+    def CHARGE_BAR_X RIGHT_EDGE - 16
+    def CHARGE_BAR_Y BOTTOM_EDGE - (8*CHARGE_BAR_LENGTH)
+    def ZOOM_BAR_LENGTH 13
 
-    mov a0, HUD_TEXTURE
-
-    # Zoom Text
-    mov a1, HUD_PADDING
-    mov a2, HUD_PADDING
-    mov a3, 0
-    mov a4, 32
-    mov a5, 104
-    mov a6, 32
-    mov a7, 0
-    syscall SYS_DRAW_TEXTURE_REGION
-
-    # B button
-    mov a1, HUD_PADDING
-    mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
-    mov a4, 16
-    mov a5, 24
-    mov a6, 16
-    syscall SYS_DRAW_TEXTURE_REGION
-
-
-    # B button action text
+    # Set draw flags
+    vmov s0..s5, false
+    mov s0, true
+    mov s2, true
     @if_freecam_enabled:
-        lod u8t, cr, freecam_enabled
+        lod u8t, s3, freecam_enabled
+        mov cr, s3
         jfs @else+
-        mov a1, 24 + HUD_PADDING
-        mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
-        mov a4, 96
+        mov s1, 5
         lod u8t, cr, freecam_relative_velocity_enabled
-        mvc a4, 112
-        mov a5, 96
-        syscall SYS_DRAW_TEXTURE_REGION
+        mvc s1, 4
         jmp @endif+
-    @else:
-
-    # Jump Text
-    mov a1, SCREEN_WIDTH - 108 - HUD_PADDING
-    mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
-    vmov a3..a4, 0
-    mov a5, 88
-    syscall SYS_DRAW_TEXTURE_REGION
-
-    def CHARGE_BAR_X SCREEN_WIDTH - 16 - HUD_PADDING
-    def CHARGE_BAR_Y SCREEN_HEIGHT - (8*CHARGE_BAR_LENGTH) - HUD_PADDING
-
-    # Calculate jump charge bar length
-    lod f32t, t0, PLAYER.jump_charge
-    fsub t0, PLAYER.MIN_JUMP_CHARGE
-    fsub t1, PLAYER.MAX_JUMP_CHARGE, PLAYER.MIN_JUMP_CHARGE
-    fdiv t0, t1
-    fctf t2, 8*CHARGE_BAR_LENGTH
-    fsub t2, 12.0
-    fmul t0, t2
-    frou t0
-    fcti t0
-
-    # Draw charge bar
-    mov a0, CHARGE_BAR_X  + 4
-    mov a1, CHARGE_BAR_Y + 6
-    mov a2, 8
-    mov a3, 8*CHARGE_BAR_LENGTH-12
-    mov a4, 1
-    syscall SYS_DRAW_RECT
-
-    .if_charging:
-        cmp gt, t0, 0
-        jfs @endif2+
-        #sub t0, 6
-        sub a1, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1) + 2, t0
-        mov a3, t0
-        mov a4, 255
-        syscall SYS_DRAW_RECT
-    @endif2:
-
-    # Jump Bar top
-    mov a0, HUD_TEXTURE
-    mov a1, CHARGE_BAR_X
-    mov a2, CHARGE_BAR_Y
-    mov a3, 88
-    mov a4, 0
-    mov a5, 16
-    mov a6, 8
-    syscall SYS_DRAW_TEXTURE_REGION
-
-    # Jump Bar Middle
-    mov a4, 8
-    mov t0, zr
-    @loop:
-        mul t1, t0, 8
-        add a2, CHARGE_BAR_Y + 8, t1
-        syscall SYS_DRAW_TEXTURE_REGION
-        inc t0
-        cmp lt, t0, CHARGE_BAR_LENGTH-2
-        jtr @loop-
-
-    # Jump Bar Bottom
-    mov a2, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1)
-    mov a4, 24
-    mov a5, 16
-    mov a6, 8
-    syscall SYS_DRAW_TEXTURE_REGION
-
-    mov a1, 24 + HUD_PADDING
-    mov a2, SCREEN_HEIGHT - 16 - HUD_PADDING
+    @else: # Player is grounded
     @if_grounded:
-        lod u8t, cr, PLAYER.is_grounded
+        lod u8t, s1, PLAYER.is_grounded
+        mov cr, s1
         jfs @else+
-        mov a3, 24
-        mov a4, 16
-        mov a5, 64
-        mov a6, 16
+        mov s1, 1
         lod u8t, cr, PLAYER.is_charging
-        mvc a3, 0
-        mvc a4, 144
-        mvc a5, 96
-        syscall SYS_DRAW_TEXTURE_REGION
+        mvc s1, 2
         jmp @endif+
-    @else:
-        mov a3, 0
-        mov a4, 128
-        mov a5, 80
-        mov a6, 16
-        syscall SYS_DRAW_TEXTURE_REGION
+    @else: # Player is flying
+        mov s1, 3
     @endif:
 
+    # X Y Buttons
+    @if_flag_enabled:
+        mov cr, s2
+        jfs @endif+
+        mov a0, HUD_SPRITESHEET
+        mov a1, LEFT_EDGE
+        mov a2, TOP_EDGE
+        mov a3, 16
+        mov a4, 0
+        mov a5, 16
+        mov a6, 32
+        mov a7, 0
+        syscall SYS_DRAW_TEXTURE_REGION
+
+        mov a0, STRINGS.ZOOM_IN
+        mov a1, LEFT_EDGE + 12
+        cal draw_string
+        mov a0, STRINGS.ZOOM_OUT
+        mov a2, TOP_EDGE + 16
+        cal draw_string
+    @endif:
+
+    # B Button
+    @if_flag_enabled:
+        mov cr, s1
+        jfs @endif+
+        mov a0, HUD_SPRITESHEET
+        mov a1, LEFT_EDGE
+        mov a2, BOTTOM_EDGE - 16
+        mov a3, 0
+        mov a4, 16
+        mov a5, 16
+        mov a6, 16
+        syscall SYS_DRAW_TEXTURE_REGION
+
+        # Text
+        mov a0, STRINGS.WALK
+        cmp eq, s1, 2
+        mvc a0, STRINGS.CANCEL
+        cmp eq, s1, 3
+        mvc a0, STRINGS.MATCH
+        cmp eq, s1, 4
+        mvc a0, STRINGS.PLAYER
+        cmp eq, s1, 5
+        mvc a0, STRINGS.GLOBAL
+        mov a1, LEFT_EDGE + 12
+        mov a2, BOTTOM_EDGE - 16
+        mov a4, 96
+        cal draw_string
+    @endif:
+
+    # Freecam
+    @if_flag_enabled:
+        mov cr, s3
+        jfs @endif+
+        mov a0, STRINGS.FREECAM
+        mov a1, RIGHT_EDGE - 112
+        mov a2, TOP_EDGE
+        cal draw_string
+
+    @endif:
+
+    # A button
+    @if_flag_enabled:
+        mov cr, s0
+        jfs @endif+
+
+        mov a0, HUD_SPRITESHEET
+        mov a1, RIGHT_EDGE - 112
+        mov a2, BOTTOM_EDGE - 16
+        vmov a3..a4, 0
+        vmov a5..a6, 16
+        syscall SYS_DRAW_TEXTURE_REGION
+
+
+        mov a0, STRINGS.JUMP
+        mov a1, RIGHT_EDGE - 100
+        mov a2, BOTTOM_EDGE - 16
+        cal draw_string
+
+        # Jump charge bar
+
+        # Calculate charge bar fill amount
+        lod f32t, t0, PLAYER.jump_charge
+        fsub t0, PLAYER.MIN_JUMP_CHARGE
+        fsub t1, PLAYER.MAX_JUMP_CHARGE, PLAYER.MIN_JUMP_CHARGE
+        fdiv t0, t1
+        fctf t2, 8*CHARGE_BAR_LENGTH
+        fsub t2, 12.0
+        fmul t0, t2
+        frou t0
+        fcti t0
+
+        # Draw charge bar background
+        mov a0, CHARGE_BAR_X  + 4
+        mov a1, CHARGE_BAR_Y + 6
+        mov a2, 8
+        mov a3, 8*CHARGE_BAR_LENGTH-12
+        mov a4, 1
+        syscall SYS_DRAW_RECT
+
+        @if_charging:
+            cmp gt, t0, 0
+            jfs @endif2+
+            #sub t0, 6
+            sub a1, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1) + 2, t0
+            mov a3, t0
+            mov a4, 255
+            syscall SYS_DRAW_RECT
+        @endif2:
+
+        # Charge Bar top
+        mov a0, HUD_SPRITESHEET
+        mov a1, CHARGE_BAR_X
+        mov a2, CHARGE_BAR_Y
+        mov a3, 88
+        mov a4, 0
+        mov a5, 16
+        mov a6, 8
+        syscall SYS_DRAW_TEXTURE_REGION
+
+        # Charge Bar Middle
+        mov a4, 8
+        mov t0, zr
+        @loop:
+            mul t1, t0, 8
+            add a2, CHARGE_BAR_Y + 8, t1
+            syscall SYS_DRAW_TEXTURE_REGION
+            inc t0
+            cmp lt, t0, CHARGE_BAR_LENGTH-2
+            jtr @loop-
+
+        # Charge Bar Bottom
+        mov a2, CHARGE_BAR_Y + 8*(CHARGE_BAR_LENGTH-1)
+        mov a4, 24
+        mov a5, 16
+        mov a6, 8
+        syscall SYS_DRAW_TEXTURE_REGION
+    @endif:
 
     @if_paused:
-        lod u8t, cr, system_paused
+        lod u8t, cr, game_paused
         jfs @endif+
-        mov a1, SCREEN_WIDTH/2 - 48
+        mov a0, STRINGS.PAUSE
+        mov a1, SCREEN_WIDTH/2 - 88
         mov a2, SCREEN_HEIGHT/2
-        mov a3, 0
-        mov a4, 64
-        mov a5, 96
-        mov a6, 16
-        syscall SYS_DRAW_TEXTURE_REGION
+        cal draw_string
     @endif:
 
-    @if_freecam_enabled:
-        # Freecam Text
-        lod u8t, cr, freecam_enabled
-        jfs @endif+
-        mov a1, SCREEN_WIDTH - 112 - HUD_PADDING
-        mov a2, HUD_PADDING
-        mov a3, 0
-        mov a4, 80
-        mov a5, 112
-        mov a6, 16
-        syscall SYS_DRAW_TEXTURE_REGION
-    @endif:
+
 
     # Zoom bar
 
-    def ZOOM_BAR_LENGTH 13
-
-
-    mov a1, HUD_PADDING
-    mov a2, 32 + HUD_PADDING
+    mov a0, HUD_SPRITESHEET
+    mov a1, LEFT_EDGE
+    mov a2, TOP_EDGE + 32
     mov a3, 104
     mov a4, 0
     mov a5, 8
@@ -2149,14 +2517,14 @@ draw_hud:
     mov a3, 112
     @loop:
         mul t1, t0, 8
-        add a1, t1, HUD_PADDING
+        add a1, LEFT_EDGE, t1
         syscall SYS_DRAW_TEXTURE_REGION
         inc t0
         cmp gt, t0, ZOOM_BAR_LENGTH-2
         jfs @loop-
     @endloop:
 
-    mov a1, 8*(ZOOM_BAR_LENGTH-1) + HUD_PADDING
+    mov a1, LEFT_EDGE + 8*(ZOOM_BAR_LENGTH-1)
     mov a3, 104
     mov a7, 0b10
     syscall SYS_DRAW_TEXTURE_REGION
@@ -2168,14 +2536,50 @@ draw_hud:
     frou t1
     fcti t1
 
-    add a1, t1, HUD_PADDING
+    add a1, t1, LEFT_EDGE
     add a1, 2
     mov a3, 120
     mov a7, 0
     syscall SYS_DRAW_TEXTURE_REGION
 
+    vpop s0..s5
+    ret
 
+#-------------------------------------------------------------------------------
+sbmk "Draw String"
+draw_string:
+    # > a0*: String address
+    # > a1..a2: Draw position
 
+    vpsh s0..s2
+    vmov s0..s2, a0..
+    vpsh a0..a7
+    mov a0, FONT_SPRITESHEET
+    vmov a5..a6, 16
+    mov a7, 0
+    @loop:
+        lod u8t, t0, s0
+        cmp eq, t0, 0
+        jtr @endloop+
+        mov t1, 32
+        cmp gt, t0, 96 # if lowercase, convert to uppercase
+        mvc t1, 64
+        sub t0, t1
+        mod a3, t0, 13
+        div a4, t0, 13
+        mul a3, 16
+        mul a4, 16
+        syscall SYS_DRAW_TEXTURE_REGION
+        add a1, 16
+        inc s0
+        cmp lt, a1, SCREEN_WIDTH
+        jtr @loop-
+        mov a1, s1
+        add a2, 16
+        jmp @loop-
+    @endloop:
+    vpop a0..a7
+    vpop s0..s2
     ret
 
 #-------------------------------------------------------------------------------
@@ -2188,12 +2592,12 @@ move_camera:
 
     # Move Bodies
     mov t15, zr # Object counter
-    lod u8t, t14, bodies_count
+    lod u8t, t14, system_bodies_count
     @loop:
         cmp lt, t15, t14
         jfs @endloop+
 
-        cea bodies, t15, BODY.SIZE
+        cea system_bodies, t15, BODY.SIZE
         lde f32t, t0, BODY.X
         lde f32t, t1, BODY.Y
         fsub t0, a0
@@ -2237,8 +2641,8 @@ move_camera:
     fmul t3, a1, BG_SCROLL_SCALE
     fadd t0, t2
     fadd t1, t3
-    fmod t0, BG_TEX_WIDTH_F
-    fmod t1, BG_TEX_HEIGHT_F
+    fmod t0, fcast SCREEN_WIDTH
+    fmod t1, fcast SCREEN_HEIGHT
     str f32t, bg_offset_x, t0
     str f32t, bg_offset_y, t1
 
@@ -2264,7 +2668,7 @@ center_camera:
     lod i8t, t3, PLAYER.parent_body_index
     cmp lt, t3, 0
     jtr @endif+
-    cea bodies, t3, BODY.SIZE
+    cea system_bodies, t3, BODY.SIZE
     lde f32t, t3, BODY.X
     lde f32t, t4, BODY.Y
     lde f32t, t5, BODY.R
@@ -2315,12 +2719,12 @@ set_distance_scale:
 
     lod f32t, t13, distance_scale
     mov t15, zr # Object counter
-    lod u8t, t14, bodies_count
+    lod u8t, t14, system_bodies_count
     @loop:
         cmp lt, t15, t14
         jfs @endloop+
 
-        cea bodies, t15, BODY.SIZE
+        cea system_bodies, t15, BODY.SIZE
         lde f32t, t0, BODY.X
         lde f32t, t1, BODY.Y
         # Multiply by previous distance scale
@@ -2398,11 +2802,6 @@ check_commands:
             fmax t0, 1.0
             mov a0, t0
             cal set_distance_scale
-            mov a1, 1
-            mov a0, Strings.zoom
-            syscall SYS_PRINT_STRING
-            lod f32t, a0, distance_scale
-            syscall SYS_PRINT_LINE_FLOAT
             jmp @endloop+
         @endif:
         .zoom_out:
@@ -2415,11 +2814,6 @@ check_commands:
             fmax t0, 1.0
             mov a0, t0
             cal set_distance_scale
-            mov a0, Strings.zoom
-            mov a1, 1
-            syscall SYS_PRINT_STRING
-            lod f32t, a0, distance_scale
-            syscall SYS_PRINT_LINE_FLOAT
             jmp @endloop+
         @endif:
     @endloop:
@@ -2449,7 +2843,7 @@ cmp_strings:
             jfs @endloop+
             .if_null:
                 cmp eq, t2, 0
-                jtr @endloop+ # Strings terminated
+                jtr @endloop+ # STRINGS terminated
                 cmp eq, t2, 32 # Count spaces as terminators
                 jtr @endloop+
                 inc t0
@@ -2698,7 +3092,6 @@ sbmk "DrawPAcircle"
 DrawPAcircle:
     vpsh s0..s9
 
-
     @is_circle_offscreen:
         fadd t0, a0, a2
         cmp flt, t0, 0.0
@@ -2824,9 +3217,9 @@ is_rect_offscreen:
     add t0, a1, a3
     cmp lt, t0, 0
     jtr @end+
-    cmp gt, a0, SCREEN_WIDTH
+    cmp gte, a0, SCREEN_WIDTH
     jtr @end+
-    cmp gt, a1, SCREEN_HEIGHT
+    cmp gte, a1, SCREEN_HEIGHT
     jtr @end+
     mov cr, false
     @end:
