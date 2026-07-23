@@ -696,7 +696,7 @@ main_menu_draw:
 
     mov a0, buffer
     mov a1, SCREEN_WIDTH/2 + 96
-    mov a2, SCREEN_HEIGHT/2 + 16
+    mov a2, SCREEN_HEIGHT/2 + 24
     cal draw_string
 
     cal draw_menu
@@ -984,7 +984,10 @@ MAIN_MENU:
     .system_slot:
         lod u8t, t0, system_id
         add t0, a1
-        clp t0, 1, 255
+        cmp eq, t0, 0
+        mvc t0, 255
+        cmp eq, t0, 256
+        mvc t0, 1
         str u8t, system_id, t0
         ret
 
@@ -1038,7 +1041,10 @@ PAUSE_MENU:
     .system_slot:
         lod u8t, t0, system_id
         add t0, a1
-        clp t0, 1, 255
+        cmp eq, t0, 0
+        mvc t0, 255
+        cmp eq, t0, 256
+        mvc t0, 1
         str u8t, system_id, t0
         ret
 
@@ -3628,7 +3634,7 @@ draw_menu:
 
         mov a0, buffer
         mov a1, SCREEN_WIDTH/2 + 112
-        mov a2, SCREEN_HEIGHT/2 -16
+        mov a2, SCREEN_HEIGHT/2 - 8
         cal draw_string
 
     @endif:
