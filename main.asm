@@ -12,6 +12,16 @@ bmk "About"
 # the system as I went, so apologies to those more experienced lol
 
 
+# Controls:
+#   Most of the controls are visible in the UI, so here are the few that
+#   are not.
+#
+#   BTN_SELECT: Enables freecam. Press BTN_B to toggle between
+#               Player relative velocities and Global velocities.
+#   BTN_START: Pause the game. This lets you access the editor, as
+#              well as save and load the system.
+
+
 
 #-------------------------------------------------------------------------------
 bmk "DATA"
@@ -22,7 +32,7 @@ HUD_SPRITESHEET: emb file "assets/hud_compact.png"
 FONT_SPRITESHEET: emb file "assets/font.png"
 
 
-system_id: emb u8t 0 # The ID of the current planetary system
+system_id: emb u8t 1 # The ID of the current planetary system
 system_count: emb u8t 0
 
 #-------------------------------------------------------------------------------
@@ -57,7 +67,7 @@ def GROUNDED_PLAYER_COLLISION_MARGIN 2.0
 #-------------------------------------------------------------------------------
 sbmk "Simulation Settings"
 
-def TIME_SCALE 5.0 # How fast the simulation runs. Must be greater than 0 or things dont work
+def TIME_SCALE 1.0 # How fast the simulation runs. Must be greater than 0 or things dont work
 
 #-------------------------------------------------------------------------------
 sbmk "Visualization Settings"
@@ -146,15 +156,13 @@ STRINGS:
     # Errors
     .ERR_INVALID_SYSTEM_ID: emb string "ERROR: INVALID SYSTEM ID"
 
-MAIN_MENU:
-    def .NEW_SYSTEM 0
-    def .LOAD_SYSTEM 1
 
-def MENU_COUNT 1
+def MENU_COUNT 2
 
 MENUS:
     def .NO_MENU 0
-    def .PAUSE_MENU 1
+    def .MAIN_MENU 1
+    def .PAUSE_MENU 2
 
 #COMMANDS:
     #.ZOOM_IN: emb string "ZOOM_IN"
@@ -195,7 +203,7 @@ PLAYER:
     .is_charging: emb u8t false # Player is charging a jump
     .can_jump: emb u8t true
     .can_move: emb u8t true
-    .is_alive: emb u8t true
+    .is_alive: emb u8t true # Unimplemented
 
     .jump_charge: emb f32t PLAYER.MIN_JUMP_CHARGE
     .smoke_cooldown_timer: emb f32t 0.0
@@ -300,7 +308,7 @@ SCREENS:
     def .MAIN_MENU 1
     def .GAME_SCREEN 2
 
-def STARTING_SCREEN SCREENS.GAME_SCREEN
+def STARTING_SCREEN SCREENS.TITLE_SCREEN
 _current_screen: emb u8t STARTING_SCREEN # Which screen the player is currently in
 
 current_active_menu_index: emb u8t MENUS.NO_MENU # Hold adress of the current active menu
@@ -349,36 +357,6 @@ _start: # Runs once when the VM starts.
 
     cal load_menus
 
-    mov a0, 0.0 # X
-    mov a1, 200.0 # Y
-    mov a2, 50.0 # VELOCITY X
-    mov a3, 0.0 # VELOCITY Y
-    mov a4, 0.0 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 100.0 # RADIUS
-    mov a6, 2000000.0 # MASS
-    mov a7, 50000 # LUMINOSITY
-    cal add_body
-
-    mov a0, 0.0 # X
-    mov a1, -200.0 # Y
-    mov a2, -50.0 # VELOCITY X
-    mov a3, 0.0 # VELOCITY Y
-    mov a4, 0.0 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 100.0 # RADIUS
-    mov a6, 2000000.0 # MASS
-    mov a7, 50000 # LUMINOSITY
-    cal add_body
-
-    mov a0, 1000.0 # X
-    mov a1, 0.0 # Y
-    mov a2, 0.0 # VELOCITY X
-    mov a3, 63.245 # VELOCITY Y
-    mov a4, 0.0 # ROTATIONAL ANGULAR VELOCITY
-    mov a5, 50.0 # RADIUS
-    mov a6, 50000.0 # MASS
-    mov a7, 50000 # LUMINOSITY
-    cal add_body
-
     #mov a0, -34000.0 # X
     #mov a1, 0.0 # Y
     #mov a2, 0.0 # VELOCITY X
@@ -418,9 +396,6 @@ _start: # Runs once when the VM starts.
     #mov a6, 6500000.0 # MASS --- This one is tricky to take off from, but it's possible!
     #mov a7, 200 # LUMINOSITY
     #cal add_body
-
-    mov a0, 0
-    cal save_system
 
     lod u8t, t0, _current_screen
 
@@ -689,6 +664,7 @@ sbmk "Main Menu Start"
 main_menu_start:
     str f32t, bg_offset_x, 0.0
     str f32t, bg_offset_y, 0.0
+    str u8t, current_active_menu_index, MENUS.MAIN_MENU
     str u8t, current_menu_selection, 0
     str u8t, _current_screen, SCREENS.MAIN_MENU
     ret
@@ -714,33 +690,16 @@ main_menu_draw:
 
     lod u8t, s0, current_menu_selection
 
-    def .MENU_POS_X SCREEN_WIDTH/2 - 87
-    def .MENU_POS_Y SCREEN_HEIGHT * 5/8
+    lod u8t, a1, system_id
+    mov a0, buffer
+    cal int_to_ascii
 
-    mov s1, zr
-    @loop:
-        mov a1, .MENU_POS_X
-        fma a2, s1, 16, .MENU_POS_Y
-        @if_selected:
-            cmp eq, s1, s0
-            jfs @endif+
-            mov a0, HUD_SPRITESHEET
-            sub a1, 16
-            mov a3, 48
-            mov a4, 0
-            vmov a5..a6, 16
-            mov a7, 0
-            syscall SYS_DRAW_TEXTURE_REGION
-            add a1, 16
-        @endif:
-            cmp eq, s1, MAIN_MENU.NEW_SYSTEM
-            sel a0, STRINGS.NEW_SYSTEM, STRINGS.LOAD_SYSTEM
+    mov a0, buffer
+    mov a1, SCREEN_WIDTH/2 + 96
+    mov a2, SCREEN_HEIGHT/2 + 16
+    cal draw_string
 
-            cal draw_string
-            inc s1
-            cmp lt, s1, MENU_ITEMS
-            jtr @loop-
-        @endloop:
+    cal draw_menu
 
     vpop s0..s1
     ret
@@ -758,31 +717,20 @@ main_menu_input:
     # > a7: BTN_START input
     # > a8: BTN_SELECT input
 
-    psh s0
-    lod u8t, s0, current_menu_selection
-    add s0, a2
-    mod s0, MENU_ITEMS
-    str u8t, current_menu_selection, s0
+    cea menus, t0, MENU.SIZE
+    lde u8t, t1, MENU.OPTIONS_COUNT
+    lod u8t, t2, current_menu_selection
+    add t2, a2
+    mod t2, t1
+    str u8t, current_menu_selection, t2
+    lde u32t, t3, MENU.OPTION_FUNCS
 
-    @if_a_pressed:
-        mov cr, a3
-        jfs @endif+
+    cea t3, t2, 4
+    lde u32t, t4, 0
 
-        # Menu options
-        @new_system:
-            cmp eq, s0, 0
-            jfs @else+
-            cal game_screen_start
-            jmp @endif+
-        @else:
-        @load_system:
-            cmp eq, s0, 1
-            jfs @else+
-        @else:
-
-    @endif:
-
-    pop s0
+    cala t4
+    str u8t, player_move_initialized, false
+    str u8t, debounce_check, true
     ret
 
 #-------------------------------------------------------------------------------
@@ -793,8 +741,6 @@ sbmk "Game Screen Start"
 game_screen_start:
     str f32t, bg_offset_x, 0.0
     str f32t, bg_offset_y, 0.0
-    lod u8t, a0, system_id
-    cal load_system
     cal update_collisions # Update collisions to fix overlapping positions
     mov a0, false
     cal center_camera
@@ -1026,14 +972,54 @@ bmk "-------------------------"
 #-------------------------------------------------------------------------------
 bmk "MENUS"
 
+sbmk "Main Menu"
+MAIN_MENU:
+    def .POS_X SCREEN_WIDTH/2 - 112
+    def .POS_Y SCREEN_HEIGHT/2
+    .MENU_NAME: emb string ""
+    def .OPTIONS_COUNT 3
+    .OPTION_NAMES: emb string "SYSTEM SLOT:\nNEW SYSTEM\nLOAD SYSTEM"
+    .OPTION_FUNCS: emb u32t .system_slot, .new_system, .load_system
+
+    .system_slot:
+        lod u8t, t0, system_id
+        add t0, a1
+        clp t0, 1, 255
+        str u8t, system_id, t0
+        ret
+
+    .new_system:
+        mov cr, a3
+        jfs @end+
+        psh s0
+        lod u8t, s0, system_id
+        mov a0, 0
+        cal load_system
+        str u8t, system_id, s0
+        pop s0
+        cal game_screen_start
+        str u8t, current_active_menu_index, MENUS.NO_MENU
+        @end:
+        ret
+
+    .load_system:
+        mov cr, a3
+        jfs @end+
+        lod u8t, a0, system_id
+        cal load_system
+        cal game_screen_start
+        str u8t, current_active_menu_index, MENUS.NO_MENU
+        @end:
+        ret
+
 sbmk "Pause Menu"
 PAUSE_MENU:
     def .POS_X SCREEN_WIDTH/2 - 96
     def .POS_Y SCREEN_HEIGHT/2 - 48
     .MENU_NAME: emb string "GAME PAUSED"
-    def .OPTIONS_COUNT 2
-    .OPTION_NAMES: emb string "TOGGLE EDITOR\nRESET"
-    .OPTION_FUNCS: emb u32t .toggle_editor, .reset
+    def .OPTIONS_COUNT 5
+    .OPTION_NAMES: emb string "TOGGLE EDITOR\nSYSTEM SLOT:\nSAVE SYSTEM\nLOAD SYSTEM\nEXIT SYSTEM"
+    .OPTION_FUNCS: emb u32t .toggle_editor, .system_slot, .save_system, .reset, .exit_system
 
     .toggle_editor:
         mov cr, a3
@@ -1043,9 +1029,28 @@ PAUSE_MENU:
         str u8t, editor_enabled, cr
         #str u8t, freecam_relative_velocity_enabled, cr
         str u8t, game_paused, false
+        str u8t, freecam_enabled, false
         str u8t, current_active_menu_index, 0
         @end:
 
+        ret
+
+    .system_slot:
+        lod u8t, t0, system_id
+        add t0, a1
+        clp t0, 1, 255
+        str u8t, system_id, t0
+        ret
+
+    .save_system:
+        mov cr, a3
+        jfs @end+
+        lod u8t, a0, system_id
+        cal save_system
+        str u8t, game_paused, false
+        str u8t, freecam_enabled, false
+        str u8t, current_active_menu_index, 0
+        @end:
         ret
 
     .reset:
@@ -1061,6 +1066,16 @@ PAUSE_MENU:
         @end:
 
         ret
+
+    .exit_system:
+        mov cr, a3
+        jfs @end+
+        str u8t, current_active_menu_index, 0
+        str u8t, game_paused, 0
+        cal main_menu_start
+        @end:
+        ret
+
 
 #-------------------------------------------------------------------------------
 bmk "-------------------------"
@@ -1083,7 +1098,7 @@ save_system:
     mov s0, a0
 
     @valid_id_check:
-        cmp gte, s0, 0
+        cmp gte, s0, 1
         mov t0, cr
         cmp lte, s0, 255
         and cr, t0
@@ -1211,36 +1226,12 @@ load_system:
     syscall SYS_STORAGE_READ
     add a1, a2
 
-    lod f32t, t1, PLAYER.x
-    lod f32t, t2, PLAYER.y
-
-    mov t15, zr
-    #@loop:
-        #cmp lt, t15, MAX_BODIES
-        #jfs @endloop+
-        #cea system_bodies, t15, BODY.SIZE
-        #inc t15
-        #lde u8t, cr, BODY.ACTIVE
-        #jfs @loop-
-
-        #lde f32t, t3, BODY.X
-        #lde f32t, t4, BODY.Y
-
-        #fsub t3, t1 # Avoid objects being in the same coordinate to avoid issues
-        #fsub t4, t2
-        #fadd t3, t4
-
-        #@if_body_on_player: # Move the player to the top of any overlapping bodies
-            #cmp eq, t3, 0.0
-            #jfs @endif+
-            #lde f32t, t4, BODY.R
-            #fsub t2, t4
-            #str f32t, PLAYER.y, t2
-            #str u8t, PLAYER.is_grounded, true
-        #@endif:
-        #jmp @loop-
-    #@endloop:
+    str u8t, PLAYER.is_alive, true
+    str u8t, PLAYER.can_move, true
+    str f32t, PLAYER.collision_radius, PLAYER_SPRITE_WIDTH_F/2.0
+    str i8t, PLAYER.parent_body_index, -1
     str u8t, player_move_initialized, false
+    str f32t, PLAYER.rot, -PI/2
     mov a0, false
     cal center_camera
 
@@ -1264,13 +1255,20 @@ reset_system:
 sbmk "Load Menus"
 load_menus:
 
+    # Main menu
+    cea menus, MENUS.MAIN_MENU, MENU.SIZE
+    ste u32t, MENU.NAME, MAIN_MENU.MENU_NAME
+    ste u16t, MENU.X, MAIN_MENU.POS_X
+    ste u16t, MENU.Y, MAIN_MENU.POS_Y
+    ste u8t, MENU.OPTIONS_COUNT, MAIN_MENU.OPTIONS_COUNT
+    ste u32t, MENU.OPTION_NAMES, MAIN_MENU.OPTION_NAMES
+    ste u32t, MENU.OPTION_FUNCS, MAIN_MENU.OPTION_FUNCS
+
     # Pause menu
     cea menus, MENUS.PAUSE_MENU, MENU.SIZE
-
     ste u32t, MENU.NAME, PAUSE_MENU.MENU_NAME
     ste u16t, MENU.X, PAUSE_MENU.POS_X
     ste u16t, MENU.Y, PAUSE_MENU.POS_Y
-    add t0, ea, MENU.OPTIONS_COUNT
     ste u8t, MENU.OPTIONS_COUNT, PAUSE_MENU.OPTIONS_COUNT
     ste u32t, MENU.OPTION_NAMES, PAUSE_MENU.OPTION_NAMES
     ste u32t, MENU.OPTION_FUNCS, PAUSE_MENU.OPTION_FUNCS
@@ -1458,8 +1456,6 @@ update_gravity:
         @loop2:
             cmp lt, s1, MAX_BODIES
             jfs @endloop2+
-            cmp eq, s1, s0
-            jtr @skip2+
             lod u8t, t0, system_bodies_count
             cmp gte, s5, t0
             jtr @endloop2+
@@ -1467,6 +1463,8 @@ update_gravity:
             lde u8t, cr, BODY.ACTIVE
             jfs @skip2+
             inc s5
+            cmp eq, s1, s0
+            jtr @skip2+
 
             cea system_bodies, s0, BODY.SIZE
             lde f32t, a0, BODY.X
@@ -1688,15 +1686,15 @@ update_positions:
         str f32t, PLAYER.rot, t6
         jmp @endif+
     @else:
-        lod f32t, t0, global_velx
-        lod f32t, t1, global_vely
-        fatan2 t2, t1, t0
-        fmod t2, 2.0*PI
-        mov t3, 0.0
-        cmp flt, t2, 0.0
-        mvc t3, 2.0*PI
-        fadd t2, t3
-        str f32t, PLAYER.rot, t2
+        #lod f32t, t0, global_velx
+        #lod f32t, t1, global_vely
+        #fatan2 t2, t1, t0
+        #fmod t2, 2.0*PI
+        #mov t3, 0.0
+        #cmp flt, t2, 0.0
+        #mvc t3, 2.0*PI
+        #fadd t2, t3
+        #str f32t, PLAYER.rot, t2
     @endif:
 
     # Update camera/background
@@ -2908,6 +2906,10 @@ draw_bodies:
 
         lod i8t, t0, selected_body_index
         cmp eq, s0, t0
+        mov t2, cr
+        lod u8t, cr, current_menu_selection
+        cmp neq, cr, 6
+        and cr, t2
         mvc a3, 255 # Selected body has full luma
         vpsh a0..a4
         mov a4, 2
@@ -3132,6 +3134,7 @@ draw_hud:
         lod u8t, cr, freecam_enabled
         jfs @else+
         mov s3, 1
+        mov s0, 0
         mov s1, 5
         lod u8t, cr, freecam_relative_velocity_enabled
         mvc s1, 4
@@ -3594,7 +3597,7 @@ draw_menu:
     cmp eq, s0, 0
     jtr @skipdraw+
 
-    cea menus, 1, MENU.SIZE
+    cea menus, s0, MENU.SIZE
     lde u16t, a1, MENU.X
     lde u16t, a2, MENU.Y
     lde u32t, a0, MENU.NAME
@@ -3603,7 +3606,7 @@ draw_menu:
     cal draw_string
 
     add a1, 16
-    add a2, 16
+    add a2, 24
     mov a0, s1
     cal draw_string
 
@@ -3615,6 +3618,20 @@ draw_menu:
     vmov a5..a6, 16
     mov a7, 0
     syscall SYS_DRAW_TEXTURE_REGION
+
+    @if_pause_menu:
+        cmp eq, s0, MENUS.PAUSE_MENU
+        jfs @endif+
+        lod u8t, a1, system_id
+        mov a0, buffer
+        cal int_to_ascii
+
+        mov a0, buffer
+        mov a1, SCREEN_WIDTH/2 + 112
+        mov a2, SCREEN_HEIGHT/2 -16
+        cal draw_string
+
+    @endif:
 
 
     #lod u16t, a1, t0 # Menu pos X
@@ -3861,10 +3878,6 @@ check_editor_input:
         str u8t, current_active_menu_index, 0
         str u8t, current_menu_selection, 0
     @end:
-
-
-    mov cr, s0
-    jfs @end_input+ # Nothing to do if no body is selected
 
     @if_editing_planet:
         mov cr, s1
@@ -4190,7 +4203,7 @@ int_to_ascii:
 
     vmov s0..s1, a0..
     # Get order of magnitude
-    mov t0, zr
+    mov t0, 1
     @loop:
         cmp gte, t0, 8
         jtr @endloop+
@@ -4292,7 +4305,7 @@ draw_circle:
     # > (f32t) a2: radius
     # > (u8t) a3: luma
 
-    .is_circle_offscreen:
+    @is_circle_offscreen:
         fadd t0, a0, a2
         cmp flt, t0, 0.0
         jtr @end+
@@ -4589,18 +4602,12 @@ DrawPAcircle:
         #mov a3, 1
         mov a3, s10
         mov a4, s9
-        cal is_rect_offscreen
-        jtr @skip+
         syscall SYS_DRAW_RECT # draw upper quarter
-        @skip:
         fadd t0, s1, s6
         fcei t0
         fcti t0
         mov a1, t0
-        cal is_rect_offscreen
-        jtr @skip+
         syscall SYS_DRAW_RECT # draw lower quarter
-        @skip:
         fcei a3, s7
         fmul a3, 2.0
         fadd a3, -1.0
@@ -4616,18 +4623,12 @@ DrawPAcircle:
         #mov a2, 1
         mov a2, s10
         mov a4, s9
-        cal is_rect_offscreen
-        jtr @skip+
         syscall SYS_DRAW_RECT # draw left quarter
-        @skip:
         fsub t1, s0, s6
         fflo t1
         fcti t1
         mov a0, t1
-        cal is_rect_offscreen
-        jtr @skip+
         syscall SYS_DRAW_RECT # draw right quarter
-        @skip:
         yield
         add s4, s10
         jmp @loop-
@@ -4645,31 +4646,10 @@ DrawPAcircle:
     fcti a2
     mov a3, a2
     mov a4, s9
-    cal is_rect_offscreen
-    jtr @end+
     syscall SYS_DRAW_RECT
     @end:
     vpop s0..s10
     ret
-
-is_rect_offscreen:
-    # > a0..a1: x,y pos
-    # > a2..a3: width, height
-
-    add t0, a0, a2
-    cmp lt, t0, 0
-    jtr @end+
-    add t0, a1, a3
-    cmp lt, t0, 0
-    jtr @end+
-    cmp gte, a0, SCREEN_WIDTH
-    jtr @end+
-    cmp gte, a1, SCREEN_HEIGHT
-    jtr @end+
-    mov cr, false
-    @end:
-    ret
-
 #-------------------------------------------------------------------------------
 sbmk "DrawLine(A: vec2, B: vec2)"
 ## Author: a.flatik
