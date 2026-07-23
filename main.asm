@@ -3885,6 +3885,8 @@ check_editor_input:
         #str u8t, freecam_relative_velocity_enabled, cr
         str u8t, current_active_menu_index, 0
         str u8t, current_menu_selection, 0
+        str i8t, selected_body_index, -1
+        jmp @end_input+
     @end:
 
     @if_editing_planet:
