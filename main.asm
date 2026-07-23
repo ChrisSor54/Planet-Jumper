@@ -1210,10 +1210,10 @@ load_system:
 
     # Load system ID
     #mov a0, system_id
-    #fma a1, s0, SYSTEM_DATA_SIZE, STRINGS.SYS_DATA_HEADER_SIZE + 3
+    fma a1, s0, SYSTEM_DATA_SIZE, STRINGS.SYS_DATA_HEADER_SIZE + 4
     #mov a2, 1
     #syscall SYS_STORAGE_READ
-    add a1, 1
+    #add a1, 1
 
     # Load Player data
     mov a0, PLAYER
