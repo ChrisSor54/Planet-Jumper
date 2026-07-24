@@ -134,6 +134,7 @@ STRINGS:
     .EDITOR: emb string "EDITOR"
     .PAUSE: emb string "GAME PAUSED"
     .TOGGLE_EDITOR: emb string ":TOGGLE EDITOR"
+    .GAME_OVER: emb string "YOU DIED!"
 
     # Editor
     .ADD_BODY: emb string ":ADD"
@@ -151,6 +152,7 @@ STRINGS:
     .R: emb string "RADIUS(KM):"
     .M: emb string "MASS(KG):"
     .LUM: emb string "LUMINOSITY:"
+    .PLASMA: emb string "IS PLASMA:"
     .BODY_ID: emb string "ID:"
     .FINISH: emb string ":FINISH"
 
@@ -231,6 +233,8 @@ BODY:
     .luminosity: emb u16t 150   # Visual brightness. Although luma are constrained within 1-255,
                                 # objects are darker at higher distance scales, so a higher
                                 # luminosity will maintain brightness at greater distances
+    .is_plasma: emb u8t false # Whether the body is safe to walk on or will kill the player
+
     # Offsets
     def .ACTIVE ($ - .active)
     def .X (.x - BODY)
@@ -242,6 +246,7 @@ BODY:
     def .R (.radius - BODY)
     def .M (.mass - BODY)
     def .LUM (.luminosity - BODY)
+    def .IS_PLASMA (.is_plasma - BODY)
     def .SIZE ($ - BODY)
 
 #-------------------------------------------------------------------------------
@@ -261,7 +266,7 @@ SMOKE:
     .y: emb f32t 0.0 # Y Position
     .velx: emb f32t 0.0 # X Velocity (km/s)
     .vely: emb f32t 0.0 # Y Velocity (km/s)
-    .lifespan: emb f32t 10.0
+    .lifespan: emb f32t .DEFAULT_LIFESPAN
     # Offsets
     def .X (.x - SMOKE)
     def .Y (.y - SMOKE)
@@ -332,6 +337,7 @@ visible_editor_value_x: emb u16t 0
 visible_editor_value_y: emb u16t 0
 visible_editor_value_x_f: emb f32t 0.0
 visible_editor_value_y_f: emb f32t 0.0
+visible_editor_value_bool: emb u8t false
 visible_editor_value_scale: emb i8t 0
 
 selected_body_index: emb i8t -1 # index of planet the cursor is on. -1 for none selected
@@ -357,51 +363,65 @@ bmk "PROCESSES"
 sbmk "Start"
 _start: # Runs once when the VM starts.
     # Initialize your game state here.
-
     cal load_menus
 
-    #mov a0, -34000.0 # X
-    #mov a1, 0.0 # Y
-    #mov a2, 0.0 # VELOCITY X
-    #mov a3, 0.0 # VELOCITY Y
-    #mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
-    #mov a5, 20000.0 # RADIUS
-    #mov a6, 20000000000.0 # MASS
-    #mov a7, 50000 # LUMINOSITY
-    #cal add_body
 
-    #mov a0, 0.0 # X
-    #mov a1, 0.0 # Y
-    #mov a2, 0.0 # VELOCITY X
-    #mov a3, 766.96 # VELOCITY Y
-    #mov a4, 2*PI/600 # ROTATIONAL ANGLUAR VELOCITY
-    #mov a5, 250.0 # RADIUS
-    #mov a6, 8000000.0 # MASS
-    #mov a7, 200 # LUMINOSITY
-    #cal add_body
+    #-------------------------------------------------------------------------------
+    # Feel free to set up planetary systems here, or in the in game editor
 
-    #mov a0, -350.0 # X
-    #mov a1, 0.0 # Y
-    #mov a2, 0.0 # VELOCITY X
-    #mov a3, 766.96 - 151.19 # VELOCITY Y
-    #mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
-    #mov a5, 10.0 # RADIUS
-    #mov a6, 50000.0 # MASS
-    #mov a7, 150 # LUMINOSITY
-    #cal add_body
+    mov a0, -34000.0 # X
+    mov a1, 0.0 # Y
+    mov a2, 0.0 # VELOCITY X
+    mov a3, 0.0 # VELOCITY Y
+    mov a4, 0.000003 # ROTATIONAL ANGULAR VELOCITY
+    mov a5, 20000.0 # RADIUS
+    mov a6, 20000000000.0 # MASS
+    mov a7, 50000 # LUMINOSITY
+    mov a8, true # IS PLASMA
+    cal add_body
 
-    #mov a0, -5000.0 # X
-    #mov a1, 0.0 # Y
-    #mov a2, 0.0 # VELOCITY X
-    #mov a3, 830.45 # VELOCITY Y
-    #mov a4, PI/10 # ROTATIONAL ANGULAR VELOCITY
-    #mov a5, 100.0 # RADIUS
-    #mov a6, 6500000.0 # MASS --- This one is tricky to take off from, but it's possible!
-    #mov a7, 200 # LUMINOSITY
-    #cal add_body
+    mov a0, 0.0 # X
+    mov a1, 0.0 # Y
+    mov a2, 0.0 # VELOCITY X
+    mov a3, 766.96 # VELOCITY Y
+    mov a4, 2*PI/600 # ROTATIONAL ANGLUAR VELOCITY
+    mov a5, 250.0 # RADIUS
+    mov a6, 8000000.0 # MASS
+    mov a7, 200 # LUMINOSITY
+    mov a8, false # IS PLASMA
+    cal add_body
 
-    #mov a0, 255
-    #cal save_system
+    mov a0, -350.0 # X
+    mov a1, 0.0 # Y
+    mov a2, 0.0 # VELOCITY X
+    mov a3, 766.96 - 151.19 # VELOCITY Y
+    mov a4, 2*PI/5 # ROTATIONAL ANGULAR VELOCITY
+    mov a5, 10.0 # RADIUS
+    mov a6, 50000.0 # MASS
+    mov a7, 150 # LUMINOSITY
+    mov a8, false # IS PLASMA
+    cal add_body
+
+    mov a0, -5000.0 # X
+    mov a1, 0.0 # Y
+    mov a2, 0.0 # VELOCITY X
+    mov a3, 830.45 # VELOCITY Y
+    mov a4, PI/10 # ROTATIONAL ANGULAR VELOCITY
+    mov a5, 100.0 # RADIUS
+    mov a6, 6500000.0 # MASS --- This one is tricky to take off from, but it's possible!
+    mov a7, 200 # LUMINOSITY
+    mov a8, false # IS PLASMA
+    cal add_body
+
+
+    # Don't forget to save your custom planetary setups to an id slot!
+    mov a0, 255
+    cal save_system
+
+    str u8t, system_id, 0
+
+    #-------------------------------------------------------------------------------
+
 
     lod u8t, t0, _current_screen
 
@@ -810,18 +830,18 @@ game_screen_update:
     mov s0, zr
     cal update_gravity
     cal check_player_input
-    cal update_velocities
     cal update_positions
     cal update_collisions
+    cal update_velocities
     cal update_smoke
     @iterate_update: # Iterate for larger timescales
         fadd s0, 1.0
         cmp flt, s0, TIME_SCALE
         jfs @end+
         cal update_gravity
+        cal update_positions
         cal update_collisions
         cal update_velocities
-        cal update_positions
         cal update_smoke
         jmp @iterate_update-
     @end:
@@ -955,10 +975,12 @@ game_screen_input:
         str u8t, current_menu_selection, t2
         lde u32t, t3, MENU.OPTION_FUNCS
 
+        # Load the function address of the selected option
         cea t3, t2, 4
         lde u32t, t4, 0
 
-        cala t4
+        cala t4 # Call function tied to selected option
+
         str u8t, player_move_initialized, false
         str u8t, debounce_check, true
         jmp @end_input+
@@ -1065,7 +1087,6 @@ PAUSE_MENU:
 
     .system_slot:
         lod u8t, t0, system_id
-        add t0, a1
         add t0, a1
         mod t0, 256
         str u8t, system_id, t0
@@ -1369,6 +1390,7 @@ add_body:
     # > (f32t) a5: radius
     # > (f32t) a6: mass
     # > (u8t)  a7: luma
+    # > (u8t)  a8: is_plasma
     # < a0: Body index
 
     # Step by step instructions to add a new planet or moon with a stable circular orbit:
@@ -1421,6 +1443,7 @@ add_body:
     ste f32t, BODY.R, a5 # Set body radius (km)
     ste f32t, BODY.M, a6 # Set mass (kg)
     ste u16t, BODY.LUM, a7 # Set luminosity
+    ste u8t, BODY.IS_PLASMA, a8 # Set state
 
     inc s0
     str u8t, system_bodies_count, s0
@@ -1453,6 +1476,7 @@ spawn_smoke:
     # > a0: smoke index
     # > a1..a2: min/max angle offset
     # > a3..a4: min/max velocity scale
+    # > a5..a6: min/max lifespan
 
     lod f32t, t0, PLAYER.x
     lod f32t, t1, PLAYER.y
@@ -1480,12 +1504,15 @@ spawn_smoke:
     fadd t2, t0
     fadd t3, t1
 
+    # Get lifespan
+    frnd t9, a5, a6
+
     cea smoke, a0, SMOKE.SIZE
     ste f32t, SMOKE.X, t2
     ste f32t, SMOKE.Y, t3
     ste f32t, SMOKE.VX, t7
     ste f32t, SMOKE.VY, t8
-    ste f32t, SMOKE.LIFESPAN, SMOKE.DEFAULT_LIFESPAN
+    ste f32t, SMOKE.LIFESPAN, t9
 
     ret
 
@@ -1564,6 +1591,8 @@ update_gravity:
             jmp @loop2-
         @endloop2:
 
+        lod u8t, cr, PLAYER.is_alive
+        jfs @endloop_bodies+
 
         # Player
         lod f32t, a0, PLAYER.x
@@ -1784,18 +1813,9 @@ update_positions:
 sbmk "Update Collisions"
 update_collisions:
     # s0: body1 index
-    # s1..s2: body1 x,y
-    # s3..s4: body1 vx, vy
-    # s5: body1 radius
-    # s6: body1 mass
-    # s7: body2 index
-    # s8..s9: body2 x,y
-    # s10..s11: body2 vx, vy
-    # s12: body2 radius
-    # s13: body2 mass
+    # s1: body2 index
 
-
-    vpsh s0..s15
+    vpsh s0..s1
 
     mov s0, zr
     mov s4, zr
@@ -1886,6 +1906,79 @@ update_collisions:
             ste f32t, BODY.Y, t6
 
 
+            # if at least one body is plasma, merge the two bodies
+            cea system_bodies, s0, BODY.SIZE
+            lde u8t, t10, BODY.IS_PLASMA
+            cea system_bodies, s1, BODY.SIZE
+            lde u8t, t11, BODY.IS_PLASMA
+
+            orr cr, t10, t11
+            jfs @skip2+
+            vpsh s2..s19
+            cea system_bodies, s0, BODY.SIZE
+            lde f32t, s2, BODY.X
+            lde f32t, s3, BODY.Y
+            lde f32t, s4, BODY.VX
+            lde f32t, s5, BODY.VX
+            lde f32t, s6, BODY.R
+            lde f32t, s7, BODY.ROT_AV
+            lde f32t, s8, BODY.M
+            lde u16t, s9, BODY.LUM
+            cea system_bodies, s1, BODY.SIZE
+            lde f32t, s12, BODY.X
+            lde f32t, s13, BODY.Y
+            lde f32t, s14, BODY.VX
+            lde f32t, s15, BODY.VX
+            lde f32t, s16, BODY.R
+            lde f32t, s17, BODY.ROT_AV
+            lde f32t, s18, BODY.M
+            lde u16t, s19, BODY.LUM
+
+            # Select the more massive body as the base
+            cmp fgt, s18, s8
+            sel t0, s1, s0
+            sel t1, s0, s1
+
+            # Compute new radius
+            fpow s6, 2.0
+            fpow s16, 2.0
+            fadd s6, s16
+            fsqrt s6 # New radius
+
+            # Add masses
+            fadd t8, s8, s18
+
+            # Average the rest of the values
+            fadd s2, s12
+            fdiv s2, 2.0
+            fadd s3, s13
+            fdiv s3, 2.0
+            fadd s4, s14
+            fdiv s4, 2.0
+            fadd s7, s17
+            fdiv s7, 2.0
+            add s9, s19
+            div s9, 2
+
+            cea system_bodies, t0, BODY.SIZE
+            ste f32t, BODY.X, s2
+            ste f32t, BODY.Y, s3
+            ste f32t, BODY.VX, s4
+            ste f32t, BODY.VY, s5
+            ste f32t, BODY.R, s6
+            ste f32t, BODY.ROT_AV, s7
+            ste f32t, BODY.M, t8
+            ste u16t, BODY.LUM, s9
+
+            lde u8t, t2, BODY.IS_PLASMA
+            cmp eq, s8, s18
+            sel t2, true, t2
+            ste u8t, BODY.IS_PLASMA, t2
+
+            mov a0, t1
+            cal remove_body
+
+            vpop s2..s19
             @skip2:
             inc s1
             jmp @loop2-
@@ -1921,6 +2014,14 @@ update_collisions:
             lde f32t, t4, BODY.R
             lde f32t, t5, BODY.VX
             lde f32t, t6, BODY.VY
+
+            @if_plasma:
+                lde u8t, cr, BODY.IS_PLASMA
+                jfs @endif2+
+                cal kill_player
+                jmp @endloop+
+            @endif2:
+
 
             # Get normal vector
             fsub a0, t0, t2 # dx
@@ -1987,16 +2088,16 @@ update_collisions:
             str f32t, PLAYER.vely, t6
 
             str u8t, PLAYER.is_grounded, true
-            jmp @end+
+            jmp @end_collision+
         @endif:
         @skip:
         inc s0
         jmp @loop-
     @endloop:
         str u8t, PLAYER.is_grounded, false
-    @end:
+    @end_collision:
 
-    vpop s0..s15
+    vpop s0..s1
     ret
 
 #-------------------------------------------------------------------------------
@@ -2006,13 +2107,13 @@ update_velocities:
     # s0..s1: Player x,y velocity
     vpsh s0..s1
 
-    @if_freecam_enabled: # If freecam is enabled, determine whether velocity is relative to the player or global
+    @if_rel_vel_disabled: # If freecam is enabled, determine whether velocity is relative to the player or global
         lod u8t, t0, editor_enabled
         lod u8t, t1, freecam_enabled
         lod u8t, cr, freecam_relative_velocity_enabled
-        not cr
-        and cr, t1
-        orr cr, t0
+        orr t0, t1
+        cmp eq, cr, false
+        and cr, t0
         jfs @else+
         lod f32t, s0, global_velx
         lod f32t, s1, global_vely
@@ -2068,13 +2169,13 @@ update_velocities:
         jmp @loop-
     @endloop:
 
-    @if_freecam_enabled:
+    @if_rel_vel_disabled:
         lod u8t, t0, editor_enabled
         lod u8t, t1, freecam_enabled
         lod u8t, cr, freecam_relative_velocity_enabled
-        not cr
-        and cr, t1
-        orr cr, t0
+        orr t0, t1
+        cmp eq, cr, false
+        and cr, t0
         jfs @else+
         lod f32t, t0, PLAYER.velx
         lod f32t, t1, PLAYER.vely
@@ -2133,7 +2234,7 @@ update_smoke:
         lde f32t, t3, SMOKE.VY
         lde f32t, t4, SMOKE.LIFESPAN
 
-        .if_smoke_alive:
+        @if_smoke_alive:
             cmp fgt, t4, 0.0
             jfs @else+
             lod f32t, t5, dt
@@ -2164,6 +2265,7 @@ update_smoke:
             mov a2, SMOKE.MAX_ANGLE_OFFSET
             mov a3, SMOKE.MIN_VEL_SCALE
             mov a4, SMOKE.MAX_VEL_SCALE
+            vmov a5..a6, SMOKE.DEFAULT_LIFESPAN
             cal spawn_smoke
             mov s1, false
             str f32t, PLAYER.smoke_cooldown_timer, PLAYER.SMOKE_SPAWN_COOLDOWN # Reset cooldown
@@ -2172,6 +2274,31 @@ update_smoke:
         jmp @loop-
     @endloop:
     vpop s0..s2
+    ret
+
+#-------------------------------------------------------------------------------
+sbmk "Kill Player"
+kill_player:
+    psh s0
+    str f32t, PLAYER.velx, 0.0
+    str f32t, PLAYER.vely, 0.0
+    #cal init_player
+    str u8t, PLAYER.is_alive, false
+
+    mov s0, 0
+    @loop:
+        mov a0, s0
+        mov a1, -2*PI
+        mov a2, 2*PI
+        mov a3, 1.0
+        mov a4, 1.0
+        mov a5, 0.5
+        mov a6, 0.5
+        cal spawn_smoke
+        inc s0
+        cmp lt, s0, SMOKE.MAX_SMOKE_COUNT
+        jtr @loop-
+    pop s0
     ret
 
 #-------------------------------------------------------------------------------
@@ -2243,6 +2370,11 @@ check_player_input:
         cal move_camera
         jmp @end_input+
     @end:
+
+    @if_not_alive:
+        lod u8t, cr, PLAYER.is_alive
+        jfs @end_input+
+    @endif:
 
     @init_player:
         lod u8t, cr, player_move_initialized
@@ -2464,6 +2596,7 @@ player_jump:
         mov a3, t0
         mov a4, t1
         #mov a4, SMOKE.MIN_VEL_SCALE
+        vmov a5..a6, SMOKE.DEFAULT_LIFESPAN
         cal spawn_smoke
         inc s0
         cmp lt, s0, 15
@@ -2631,6 +2764,9 @@ check_collision:
 sbmk "Check Player Collision"
 check_player_collision:
     # > a0: body index
+    lod u8t, cr, PLAYER.is_alive
+    jfs @end_check+
+
     cea system_bodies, a0, BODY.SIZE
     lde f32t, t0, BODY.X
     lde f32t, t1, BODY.Y
@@ -2677,6 +2813,8 @@ check_player_collision:
 
     # Check if distance is less than body radius
     cmp flt, t2, t4
+
+    @end_check:
     ret
 
 #-------------------------------------------------------------------------------
@@ -2795,9 +2933,9 @@ draw_player:
     lod u8t, cr, PLAYER.is_alive
     jfs @skipdraw+
 
-    lod f32t, s0, distance_scale # Don't draw a microscopic player
-    cmp fgt, s0, .PLAYER_MAX_DRAW_DISTANCE
-    jtr @skipdraw+
+    lod f32t, s0, distance_scale
+    #cmp fgt, s0, .PLAYER_MAX_DRAW_DISTANCE # Don't draw a microscopic player
+    #jtr @skipdraw+
 
 
     @if_zoomed_out:
@@ -3405,6 +3543,8 @@ draw_hud:
             mvc a0, STRINGS.M
             cmp eq, s5, 7
             mvc a0, STRINGS.LUM
+            cmp eq, s5, 8
+            mvc a0, STRINGS.PLASMA
 
             mov a1, LEFT_EDGE
             mov a2, TOP_EDGE + 56
@@ -3419,17 +3559,19 @@ draw_hud:
 
             lod f32t, t0, visible_editor_value_x_f
             lod u16t, t3, visible_editor_value_x
+            lod u8t, t4, visible_editor_value_bool
 
             mov a0, buffer
             @if_float:
-                cmp neq, s5, 7
-                jfs @else2+
+                cmp gte, s5, 7
+                jtr @else2+
                 mov a1, t0
                 mov a2, 2
                 cal float_to_ascii
                 jmp @endif2+
             @else2:
-                mov a1, t3
+                cmp eq, s5, 7
+                sel a1, t3, t4
                 cal int_to_ascii
             @endif2:
             mov a0, buffer
@@ -3438,6 +3580,9 @@ draw_hud:
             cmp gt, s5, 3
             mvc a1, LEFT_EDGE + 64
             cal draw_string
+
+            cmp eq, s5, 8
+            jtr @skip+
 
             mov a1, LEFT_EDGE
             mov a2, TOP_EDGE + 88
@@ -3501,6 +3646,8 @@ draw_hud:
                 mov a4, 255
                 cal draw_line
             @endif2:
+
+            @skip:
 
             mov a0, STRINGS.FINISH
             mov a1, RIGHT_EDGE - 112
@@ -3592,6 +3739,22 @@ draw_hud:
         mov a3, 120
         mov a7, 0
         syscall SYS_DRAW_TEXTURE_REGION
+    @endif:
+
+    @if_player_not_alive:
+        lod u8t, cr, PLAYER.is_alive
+        jtr @endif+
+        lod u8t, cr, editor_enabled
+        jtr @endif+
+        lod u8t, cr, freecam_enabled
+        jtr @endif+
+        lod u8t, cr, game_paused
+        jtr @endif+
+
+        mov a0, STRINGS.GAME_OVER
+        mov a1, SCREEN_WIDTH/2 - 72
+        mov a2, SCREEN_HEIGHT/2 + 72
+        cal draw_string
     @endif:
 
     vpop s0..s5
@@ -3817,6 +3980,9 @@ center_camera:
     # s1: Lerp or snap
 
     vpsh s0..s1
+    lod u8t, cr, PLAYER.is_alive
+    jfs @end_center+
+
     mov s1, a0
     lod f32t, a0, PLAYER.x
     lod f32t, a1, PLAYER.y
@@ -3842,6 +4008,8 @@ center_camera:
 
 
     @should_offset_camera:
+        lde u8t, cr, BODY.IS_PLASMA
+        jtr @endif+
         fsqrt t6, t5
         ffma t5, t6, GROUNDED_DISTANCE, t5
         lod f32t, t6, PLAYER.collision_radius
@@ -3868,6 +4036,8 @@ center_camera:
     @end:
 
     cal move_camera
+
+    @end_center:
     vpop s0..s1
     ret
 
@@ -3952,10 +4122,11 @@ check_editor_input:
         str u8t, current_menu_selection, t2
         lde u32t, t3, MENU.OPTION_FUNCS
 
+        # Load the function address of the selected option
         cea t3, t2, 4
         lde u32t, t4, 0
 
-        cala t4
+        cala t4 # Call function tied to selected option
         str u8t, player_move_initialized, false
         str u8t, debounce_check, true
         jmp @end_input+
@@ -3995,6 +4166,8 @@ check_editor_input:
         jtr @edit_mass+
         cmp eq, s1, 6
         jtr @edit_luminosity+
+        cmp eq, s1, 7
+        jtr @edit_state+
         str u8t, current_menu_selection, 0
         str f32t, visible_editor_value_x_f, 0.0
         str f32t, visible_editor_value_y_f, 0.0
@@ -4041,6 +4214,7 @@ check_editor_input:
         @edit_rotation:
             fctf t1, a1
             sub t2, s3, a2
+            mod t2, 8
             fctf t3, t2
             fpow t3, 10.0, t3
             fmul t1, t3
@@ -4053,6 +4227,7 @@ check_editor_input:
         @edit_radius:
             fctf t1, a1
             sub t2, s3, a2
+            mod t2, 8
             fctf t3, t2
             fpow t3, 10.0, t3
             fmul t1, t3
@@ -4066,6 +4241,7 @@ check_editor_input:
         @edit_mass:
             fctf t1, a1
             sub t2, s3, a2
+            mod t2, 8
             fctf t3, t2
             fpow t3, 10.0, t3
             fmul t1, t3
@@ -4079,6 +4255,7 @@ check_editor_input:
         @edit_luminosity:
             mov t1, a1
             sub t2, s3, a2
+            mod t2, 8
             pow t3, 10, t2
             mul t1, t3
             lde u16t, t3, BODY.LUM
@@ -4089,7 +4266,13 @@ check_editor_input:
             ste u16t, BODY.LUM, t3
             str u16t, visible_editor_value_x, t3
             str i8t, visible_editor_value_scale, t2
-
+            jmp @end+
+        @edit_state:
+            lde u8t, t1, BODY.IS_PLASMA
+            add t1, a1
+            mod t1, 2
+            ste u8t, BODY.IS_PLASMA, t1
+            str u8t, visible_editor_value_bool, t1
         @end:
         jmp @end_input+
     @else:
